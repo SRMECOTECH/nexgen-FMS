@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+/* =====================================================================
+   neXgen-FMS theme — Dark + Cyan / Sky-blue / Sea-blue
+   ===================================================================== */
+
+:root {
+  /* Surfaces (deepest -> highest elevation) */
+  --bg-0:  #0a0a0f;   /* page background */
+  --bg-1:  #11121a;   /* card / panel */
+  --bg-2:  #1a1c26;   /* hover / nested panel */
+  --bg-3:  #252832;   /* border / divider tint */
+
+  /* Text */
+  --fg-1:  #f3f4f6;   /* primary text */
+  --fg-2:  #b3b8c5;   /* secondary text */
+  --fg-3:  #6b7280;   /* muted */
+
+  /* Brand — cyan / sky-blue / sea-blue */
+  --accent:        #22d3ee;   /* cyan */
+  --accent-hover:  #38bdf8;   /* sky blue */
+  --accent-soft:   rgba(34, 211, 238, 0.12);
+  --accent-glow:   rgba(56, 189, 248, 0.38);
+  --accent-2:      #0ea5e9;   /* sea blue (deeper) */
+
+  /* Semantic */
+  --success: #22c55e;
+  --warning: #facc15;
+  --danger:  #ef4444;
+  --info:    #38bdf8;
+
+  /* Borders & shadows */
+  --border:  #2a2d38;
+  --shadow:  0 4px 20px rgba(0, 0, 0, 0.4);
+
+  /* Type system */
+  --font-body:    'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg-0);
+  /* layered radial glows give the dark page subtle depth */
+  background-image:
+    radial-gradient(900px 500px at 12% -8%, rgba(34, 211, 238, 0.10), transparent 60%),
+    radial-gradient(800px 600px at 100% 0%, rgba(14, 165, 233, 0.09), transparent 55%);
+  background-attachment: fixed;
+  color: var(--fg-1);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Display typography — headings & metrics use Space Grotesk with tight tracking */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+/* metric numbers: tabular figures so columns line up, slightly tighter */
+.metric, .tabular {
+  font-family: var(--font-display);
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  letter-spacing: -0.02em;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* Selection */
+::selection { background: var(--accent-soft); color: var(--accent-hover); }
+
+/* Reusable utility classes (used by components) */
+.card {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0) 42%),
+    var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem;
+  box-shadow: 0 1px 0 0 rgba(255,255,255,0.04) inset, 0 10px 30px -12px rgba(0,0,0,0.6);
+  transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+}
+/* top hairline highlight = subtle 3D bevel (cyan, matches accent) */
+.card::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+  opacity: 0.6; border-radius: 14px 14px 0 0;
+}
+
+.card-hover { transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s; }
+.card-hover:hover {
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 18px 40px -16px rgba(0,0,0,0.75), 0 0 28px -8px var(--accent-glow);
+}
+
+/* interactive 3D tilt-ish lift for KPI tiles / table rows */
+.lift { transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; }
+.lift:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -14px rgba(0,0,0,0.7); }
+
+/* gradient brand text */
+.text-gradient {
+  background: linear-gradient(90deg, var(--accent-hover), var(--accent));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #000;
+  font-weight: 600;
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 0 18px var(--accent-glow);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--fg-2);
+  font-weight: 500;
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.btn-ghost:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+.chip-accent { background: var(--accent-soft); color: var(--accent); }
+.chip-success { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+.chip-warning { background: rgba(250, 204, 21, 0.15); color: var(--warning); }
+.chip-danger  { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+
+/* Animations */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
+
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50%      { box-shadow: 0 0 0 8px transparent; }
+}
+.animate-pulse-amber { animation: pulse-amber 2s ease-in-out infinite; }
+
+/* =====================================================================
+   Shared form / toolbar primitives (used by the redesigned pages)
+   ===================================================================== */
+.input-field {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.input-field input { background: transparent; outline: none; width: 100%; color: var(--fg-1); }
+.input-field input::placeholder { color: var(--fg-3); }
+
+/* secondary / ghost toolbar button (Refresh, etc.) */
+.btn-soft {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.8rem; font-weight: 500;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.btn-soft:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.btn-soft:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* zebra-free table rows that lift subtly on hover */
+.row-hover { transition: background 0.15s ease; }
+.row-hover:hover { background: var(--bg-2); }
+
+/* recharts: kill the default focus outline on bars/sectors */
+.recharts-surface:focus, .recharts-wrapper:focus { outline: none; }
+.recharts-default-tooltip { display: none !important; } /* we use a custom themed tooltip */

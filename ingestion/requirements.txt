@@ -1,0 +1,10 @@
+# Ingestion pipeline deps (install into the project .venv)
+#   .venv\Scripts\python.exe -m pip install -r ingestion/requirements.txt
+pandas>=2.2
+openpyxl>=3.1            # read sample_data/*.xlsx
+SQLAlchemy>=2.0          # DB-agnostic sink layer
+psycopg[binary]>=3.2     # Postgres (Neon) driver
+# live Iceberg source (only needed for --source iceberg):
+pyiceberg[s3fs,pyarrow]>=0.11
+# future MySQL sink:
+# PyMySQL>=1.1

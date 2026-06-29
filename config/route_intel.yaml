@@ -1,0 +1,104 @@
+# ============================================================================
+# Detailed Analysis of GPS Data — central configuration
+# Everything here is hot-swappable; restart the backend after editing.
+# ============================================================================
+
+# ---- Streamlit service ----------------------------------------------------
+streamlit:
+  host: "127.0.0.1"
+  port: 8501
+  app_file: "streamlit_app/app.py"
+  autostart: true                # spawn streamlit when FastAPI boots
+  headless: true                 # do not auto-open a browser tab
+  startup_grace_sec: 2.0         # how long FastAPI waits before reporting "up"
+
+# ---- vendor Excel column map (gpsfinal_*.xlsx) ----------------------------
+# Left = your vendor column.  Right = the canonical name the analyzers expect.
+# Any column NOT listed is dropped after normalisation. Override here when a
+# new vendor format arrives instead of touching code.
+excel:
+  date_format: "%d-%b-%y %H:%M:%S"     # how dt_message is encoded
+  required_columns:
+    - s_asset_id
+    - dt_message
+    - i_lat
+    - i_long
+  column_map:
+    s_asset_id:         vehicle_id
+    i_lat:              latitude
+    i_long:             longitude
+    s_wpnt1:            Waypoint1
+    s_wpnt2:            Waypoint2
+    i_wpnt1_lat:        Waypoint1_lat
+    i_wpnt1_long:       Waypoint1_lng
+    i_wpnt2_lat:        Waypoint2_lat
+    i_wpnt2_long:       Waypoint2_lng
+    s_wpnt1_state_abbr: state
+  speed_columns:                       # tried in order; first present wins
+    - i_corrt_speed
+    - i_speed
+  odometer_column: i_distance          # cumulative metres
+  odometer_units: meters               # meters | kilometers
+  odometer_per_row_clip_max_km: 10     # discard absurd jumps caused by resets
+
+# ---- trip auto-detection --------------------------------------------------
+trip_detection:
+  stop_min_minutes: 30           # ≥ this long stopped = trip boundary
+  min_trip_distance_km: 1.0      # drop micro-segments
+  min_trip_duration_min: 5.0     # drop micro-segments
+
+# ---- aggregation ----------------------------------------------------------
+aggregation:
+  default_window: "30min"
+  choices: ["15min", "30min", "1H", "2H"]
+  traffic_slow_threshold_kmph: 15
+
+# ---- cost model defaults (sidebar values in Streamlit) --------------------
+cost:
+  fuel_price_per_liter: 100.0
+  fuel_price_min: 50.0
+  fuel_price_max: 200.0
+  fuel_price_step: 5.0
+
+  fuel_efficiency_kmpl: 4.0
+  fuel_efficiency_min: 2.0
+  fuel_efficiency_max: 8.0
+  fuel_efficiency_step: 0.5
+
+  driver_wage_per_hour: 150.0
+  driver_wage_min: 50.0
+  driver_wage_max: 500.0
+  driver_wage_step: 10.0
+
+  idle_fuel_consumption_lph: 1.5
+
+# ---- paths ----------------------------------------------------------------
+paths:
+  upload_dir: "data/ri_uploads"     # original Excels (so we can re-analyse)
+  cache_dir: "data/cache"           # geocode + POI on-disk caches
+  sample_file: "data/gpsfinal_20260603.xlsx"
+  models_dir: "models/insights"     # drop GGUF here to upgrade AI
+
+# ---- AI insights ----------------------------------------------------------
+ai_insights:
+  default_backend: "auto"           # auto | rule-based | llama-cpp
+  llama_cpp:
+    n_ctx: 4096
+    n_threads: 4
+    max_tokens: 320
+    temperature: 0.4
+
+# ---- external services (rate-limited; cached in MySQL) --------------------
+external:
+  nominatim:
+    enabled: false                  # leave off until you want addresses
+    user_agent: "nextGen-FMS-RouteIntel/1.0"
+    rate_limit_seconds: 1.0
+  overpass:
+    enabled: false                  # leave off until you want POIs
+    rate_limit_seconds: 1.0
+    default_radius_m: 1500
+    categories: ["fuel", "restaurant", "hotel", "parking", "rest_area", "hospital"]
+  open_meteo:
+    enabled: true                   # no key required
+    cache_hours: 6

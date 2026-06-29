@@ -1,0 +1,35 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+python-multipart==0.0.20
+pandas==2.2.3
+numpy==2.2.1
+aiofiles==24.1.0
+
+# Lakehouse clients — actively used by lakehouse/ wrappers.
+# Pins follow the versions the neXgen-Lakehouse Data Catalog UI shows in its snippets.
+pyiceberg[s3fs,pyarrow]>=0.7.1
+clickhouse-connect>=0.8
+duckdb>=1.0
+requests>=2.31
+
+# Route Intelligence — config + adapter + MySQL DAO + Streamlit "Detailed Analysis"
+PyYAML>=6.0
+SQLAlchemy>=2.0
+PyMySQL>=1.1
+openpyxl>=3.1
+xlrd>=2.0.1
+
+# Streamlit deep-analysis page (the "Detailed Analysis of GPS Data" service)
+streamlit>=1.28
+plotly>=5.17
+folium>=0.15
+streamlit-folium>=0.15
+geopy>=2.4
+overpy>=0.7
+timezonefinder>=6.2
+
+# Local AI insights (optional — drop GGUF into models/insights/ to activate)
+# llama-cpp-python>=0.2  # uncomment after dropping a .gguf model
