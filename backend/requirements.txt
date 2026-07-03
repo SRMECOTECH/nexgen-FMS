@@ -14,6 +14,7 @@ pyiceberg[s3fs,pyarrow]>=0.7.1
 clickhouse-connect>=0.8
 duckdb>=1.0
 requests>=2.31
+httpx>=0.27          # async client for the smart-truck ML proxy
 
 # Route Intelligence — config + adapter + MySQL DAO + Streamlit "Detailed Analysis"
 PyYAML>=6.0
@@ -32,4 +33,7 @@ overpy>=0.7
 timezonefinder>=6.2
 
 # Local AI insights (optional — drop GGUF into models/insights/ to activate)
-# llama-cpp-python>=0.2  # uncomment after dropping a .gguf model
+llama-cpp-python>=0.2     # local generative LLM (Qwen2.5-1.5B-Instruct / Phi-3-mini GGUF)
+sentence-transformers>=3  # local embeddings (all-MiniLM-L6-v2) — used for de-dup + similar-trips
+
+# Pure-numpy KNN avoids dragging scikit-learn in just for cosine_similarity.

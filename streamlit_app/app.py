@@ -171,6 +171,9 @@ with st.sidebar:
         type=["xlsx", "xls"],
         accept_multiple_files=True,
         help=(
+            "ONE Excel = ONE trip. Long stops within the file are SEGMENTS of "
+            "that trip, not separate trips. Upload multiple files to compare "
+            "different trips side-by-side.\n\n"
             "Vendor schema: s_asset_id, dt_message, i_lat, i_long, i_corrt_speed, "
             "i_distance, s_wpnt1, s_wpnt2.  Legacy schema (Asset Number, Date Time, "
             "Latitude, Longitude, Distance, Status) also supported."

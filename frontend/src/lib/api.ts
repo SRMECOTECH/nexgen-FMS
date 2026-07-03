@@ -1,20 +1,29 @@
 import axios from 'axios';
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:9001/api/v1',
   timeout: 15000,
 });
 
 const root = axios.create({
-  baseURL: (import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1').replace(/\/api\/v1$/, ''),
+  baseURL: (import.meta.env.VITE_API_URL ?? 'http://localhost:9001/api/v1').replace(/\/api\/v1$/, ''),
   timeout: 5000,
 });
 
 // GPS endpoints read the full feed (cold read from remote Neon can take a few
 // seconds), so they get a generous timeout rather than the default 15s.
 const slowApi = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:9001/api/v1',
   timeout: 90000,
+});
+
+// AI composer fans out to multiple ML models in parallel, each of which can
+// cold-start the first time. The backend already caps per-model time at
+// AI_MODEL_TIMEOUT (default 6s) and substitutes dummy data for slow models,
+// but we still give the outer call plenty of headroom for the first request.
+const aiApi = axios.create({
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:9001/api/v1',
+  timeout: 60000,
 });
 
 // ------------------------------ Types ------------------------------
@@ -630,4 +639,133 @@ export async function riGetComparison(id: number): Promise<RIComparison> {
 }
 export async function riListInsights(limit = 50, insight_type?: string) {
   const { data } = await api.get('/route-intel/insights', { params: { limit, insight_type } }); return data;
+}
+
+// =========================================================================
+// AI Operating System — Mission Control composer (/api/v1/ai/*)
+// Composes ml_client calls from the smart-truck subscription API into the
+// narrative + cards the AI-OS UI consumes. See backend/app/api/ai.py.
+// =========================================================================
+
+export interface MissionControlSummary {
+  generated_at: string;
+  greeting: string;
+  operational_risk: 'LOW' | 'MEDIUM' | 'HIGH';
+  bullets: string[];
+  signals: {
+    drivers_scanned: number;
+    drivers_at_risk: number;
+    fleet_avg_driver_score: number | null;
+    fatigued_drivers: number | null;
+    anomaly_events_scanned: number | null;
+    anomaly_events_flagged: number | null;
+    upcoming_trips_forecast: number | null;
+  };
+  sources: Record<'driver_scorer' | 'fatigue_predictor' | 'anomaly_detector' | 'demand_forecaster', 'ok' | 'dummy' | 'unavailable'>;
+}
+
+export interface AiCard {
+  id: 'fleet_stability' | 'eta_confidence' | 'risk_index' | 'ai_confidence';
+  title: string;
+  value_pct: number;
+  confidence_pct: number;
+  trend: 'up' | 'down' | 'flat';
+  blurb: string;
+  explain_endpoint: string;
+}
+
+export async function aiMissionControl(): Promise<MissionControlSummary> {
+  const { data } = await aiApi.get('/ai/mission-control/summary'); return data;
+}
+export async function aiCards(): Promise<{ cards: AiCard[]; generated_at: string }> {
+  const { data } = await aiApi.get('/ai/cards'); return data;
+}
+export async function aiExplain(cardId: AiCard['id']): Promise<any> {
+  const { data } = await aiApi.get(`/ai/explain/${cardId}`); return data;
+}
+export async function aiLiveThinking(): Promise<{ now: string; ticks: { t: string; agent: string; msg: string }[] }> {
+  const { data } = await aiApi.get('/ai/live-thinking'); return data;
+}
+
+// =========================================================================
+// Observe — fleet-wide raw-signal rollup over the route-intel warehouse.
+// =========================================================================
+
+export interface ObserveKpis {
+  n_vehicles: number; n_trips: number;
+  total_km: number; total_hours: number;
+  moving_hours: number; stopped_hours: number;
+  avg_speed_kmph: number; max_speed_kmph: number;
+  latest_activity_ts: string | null;
+  first_activity_ts: string | null;
+}
+
+export interface ObserveVehicle {
+  vehicle_id: string;
+  n_uploads: number; n_trips: number; total_segments: number;
+  total_km: number; total_hours: number; moving_hours: number; stopped_hours: number;
+  avg_speed_kmph: number; max_speed_kmph: number;
+  first_seen_ts: string | null;
+  last_seen_ts: string | null;
+  last_trip_end: string | null;
+  n_analyzed: number;
+}
+
+export interface ObserveTrip {
+  id: number; upload_id: number; vehicle_id: string;
+  from_waypoint: string | null; to_waypoint: string | null;
+  start_ts: string; end_ts: string;
+  distance_km: number; duration_min: number;
+  moving_min: number; stopped_min: number;
+  n_segments: number; avg_speed_kmph: number; max_speed_kmph: number;
+  analyzed: 0 | 1;
+}
+
+export interface ObserveAlert {
+  alert_type: 'long_idle' | 'slow_avg' | 'long_haul' | 'unanalysed' | 'backtracks' | string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  trip_id: number;
+  vehicle_id: string;
+  from_waypoint: string | null;
+  to_waypoint: string | null;
+  start_ts: string | null;
+  note: string;
+  metric: number;
+}
+
+export interface ObserveSnapshot {
+  generated_at: string;
+  kpis: ObserveKpis;
+  vehicles: ObserveVehicle[];
+  recent_trips: ObserveTrip[];
+  alerts: ObserveAlert[];
+}
+
+export async function observeSnapshot(): Promise<ObserveSnapshot> {
+  const { data } = await aiApi.get('/observe/snapshot'); return data;
+}
+
+// Device alerts — findings parsed from the vendor s_alert_lov column.
+export interface DeviceAlertFinding {
+  code: string;
+  label: string;
+  labelled: boolean;
+  count: number;
+  n_devices: number;
+  sample_value: string;
+  devices: { device: string; count: number }[];
+}
+export interface DeviceAlerts {
+  generated_at: string;
+  totals: { files_scanned: number; gps_rows: number; alert_rows: number; alert_row_pct: number; distinct_codes: number };
+  findings: DeviceAlertFinding[];
+}
+export async function observeDeviceAlerts(): Promise<DeviceAlerts> {
+  const { data } = await aiApi.get('/observe/device-alerts'); return data;
+}
+export async function observeGetAlertLabels(): Promise<{ labels: Record<string, string> }> {
+  const { data } = await aiApi.get('/observe/alert-labels'); return data;
+}
+export async function observePutAlertLabels(patch: Record<string, string>): Promise<{ labels: Record<string, string> }> {
+  const { data } = await aiApi.put('/observe/alert-labels', patch); return data;
 }

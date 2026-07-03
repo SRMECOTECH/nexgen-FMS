@@ -82,9 +82,31 @@ _DDL_MYSQL: List[str] = [
     """
     CREATE TABLE IF NOT EXISTS ri_trips (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        upload_id BIGINT NOT NULL,
-        seq INT NOT NULL,
+        upload_id BIGINT NOT NULL UNIQUE,
         vehicle_id VARCHAR(64),
+        start_ts DATETIME NOT NULL,
+        end_ts DATETIME NOT NULL,
+        duration_min DOUBLE,
+        distance_km DOUBLE,
+        n_points INT,
+        n_segments INT,
+        avg_speed_kmph DOUBLE,
+        max_speed_kmph DOUBLE,
+        moving_min DOUBLE,
+        stopped_min DOUBLE,
+        from_waypoint VARCHAR(255),
+        to_waypoint VARCHAR(255),
+        start_lat DOUBLE, start_lng DOUBLE,
+        end_lat DOUBLE,   end_lng DOUBLE,
+        analyzed TINYINT(1) DEFAULT 0,
+        INDEX idx_ri_trips_upload (upload_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ri_segments (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        trip_id BIGINT NOT NULL,
+        seq INT NOT NULL,
         start_ts DATETIME NOT NULL,
         end_ts DATETIME NOT NULL,
         duration_min DOUBLE,
@@ -99,8 +121,8 @@ _DDL_MYSQL: List[str] = [
         start_lat DOUBLE, start_lng DOUBLE,
         end_lat DOUBLE,   end_lng DOUBLE,
         analyzed TINYINT(1) DEFAULT 0,
-        INDEX idx_ri_trips_upload (upload_id),
-        UNIQUE KEY uq_ri_trips_upload_seq (upload_id, seq)
+        INDEX idx_ri_seg_trip (trip_id),
+        UNIQUE KEY uq_ri_seg_trip_seq (trip_id, seq)
     )
     """,
     """
@@ -296,66 +318,117 @@ def insert_upload(*, filename: str, original_name: str, sha256: str,
         return int(r.lastrowid)
 
 
+def upload_display_name(vehicle_id: Optional[str], first_ts, last_ts) -> str:
+    """Identify an uploaded GPS file by DEVICE + DATE, not its filename —
+    e.g. ``CG15EA3403 · 03 Jun 2026`` (or a ``→`` range when it spans days).
+    Falls back gracefully when the device id or timestamps are missing."""
+    dev = (vehicle_id or "unknown-device").strip()
+
+    def _d(ts):
+        if ts is None:
+            return None
+        try:
+            return ts.strftime("%d %b %Y") if hasattr(ts, "strftime") else str(ts)[:10]
+        except Exception:
+            return str(ts)[:10]
+
+    d1, d2 = _d(first_ts), _d(last_ts)
+    if d1 and d2 and d1 != d2:
+        return f"{dev} · {d1} → {d2}"
+    return f"{dev} · {d1}" if d1 else dev
+
+
 def list_uploads(limit: int = 50) -> List[Dict]:
     bootstrap()
     with get_engine().connect() as c:
         rows = c.execute(text("""
             SELECT u.id, u.filename, u.original_name, u.vehicle_id, u.n_rows,
                    u.first_ts, u.last_ts, u.total_distance_km, u.uploaded_at,
-                   (SELECT COUNT(*) FROM ri_trips t WHERE t.upload_id=u.id) AS trip_count
+                   (SELECT COUNT(*) FROM ri_trips t WHERE t.upload_id=u.id) AS trip_count,
+                   (SELECT t.n_segments FROM ri_trips t WHERE t.upload_id=u.id LIMIT 1) AS n_segments
             FROM ri_uploads u
             ORDER BY u.uploaded_at DESC
             LIMIT :lim
         """), {"lim": limit}).mappings().all()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["display_name"] = upload_display_name(d.get("vehicle_id"), d.get("first_ts"), d.get("last_ts"))
+        out.append(d)
+    return out
 
 
 def get_upload(upload_id: int) -> Optional[Dict]:
     with get_engine().connect() as c:
         r = c.execute(text("SELECT * FROM ri_uploads WHERE id=:id"),
                       {"id": upload_id}).mappings().first()
-        return dict(r) if r else None
+        if not r:
+            return None
+        d = dict(r)
+        d["display_name"] = upload_display_name(d.get("vehicle_id"), d.get("first_ts"), d.get("last_ts"))
+        return d
 
 
-# --- DAO: trips --------------------------------------------------------------
-def insert_trips(upload_id: int, vehicle_id: str, trips: Iterable[Any]) -> List[int]:
+# --- DAO: trips (1 row per upload) ------------------------------------------
+def upsert_trip(upload_id: int, trip: Any) -> int:
+    """Insert or replace the single trip row for an upload."""
     bootstrap()
-    ids: List[int] = []
     with get_engine().begin() as c:
-        for t in trips:
-            r = c.execute(text("""
-                INSERT INTO ri_trips
-                  (upload_id, seq, vehicle_id, start_ts, end_ts, duration_min,
-                   distance_km, n_points, avg_speed_kmph, max_speed_kmph,
-                   moving_min, stopped_min, from_waypoint, to_waypoint,
-                   start_lat, start_lng, end_lat, end_lng)
-                VALUES
-                  (:upload_id, :seq, :vehicle_id, :start_ts, :end_ts, :duration_min,
-                   :distance_km, :n_points, :avg_speed_kmph, :max_speed_kmph,
-                   :moving_min, :stopped_min, :from_waypoint, :to_waypoint,
-                   :start_lat, :start_lng, :end_lat, :end_lng)
-            """), {
-                "upload_id": upload_id, "seq": t.seq, "vehicle_id": vehicle_id,
-                "start_ts": t.start_ts, "end_ts": t.end_ts,
-                "duration_min": t.duration_min, "distance_km": t.distance_km,
-                "n_points": t.n_points, "avg_speed_kmph": t.avg_speed_kmph,
-                "max_speed_kmph": t.max_speed_kmph,
-                "moving_min": t.moving_min, "stopped_min": t.stopped_min,
-                "from_waypoint": t.from_waypoint, "to_waypoint": t.to_waypoint,
-                "start_lat": t.start_lat, "start_lng": t.start_lng,
-                "end_lat": t.end_lat, "end_lng": t.end_lng,
-            })
-            ids.append(int(r.lastrowid))
-    return ids
+        existing = c.execute(text("SELECT id FROM ri_trips WHERE upload_id=:u"),
+                             {"u": upload_id}).scalar()
+        if existing:
+            c.execute(text("""
+                UPDATE ri_trips SET
+                  vehicle_id=:vehicle_id, start_ts=:start_ts, end_ts=:end_ts,
+                  duration_min=:duration_min, distance_km=:distance_km,
+                  n_points=:n_points, n_segments=:n_segments,
+                  avg_speed_kmph=:avg_speed_kmph, max_speed_kmph=:max_speed_kmph,
+                  moving_min=:moving_min, stopped_min=:stopped_min,
+                  from_waypoint=:from_waypoint, to_waypoint=:to_waypoint,
+                  start_lat=:start_lat, start_lng=:start_lng,
+                  end_lat=:end_lat, end_lng=:end_lng
+                WHERE id=:id
+            """), _trip_row(trip, upload_id, trip_id=int(existing)))
+            return int(existing)
+        r = c.execute(text("""
+            INSERT INTO ri_trips
+              (upload_id, vehicle_id, start_ts, end_ts, duration_min,
+               distance_km, n_points, n_segments, avg_speed_kmph, max_speed_kmph,
+               moving_min, stopped_min, from_waypoint, to_waypoint,
+               start_lat, start_lng, end_lat, end_lng)
+            VALUES
+              (:upload_id, :vehicle_id, :start_ts, :end_ts, :duration_min,
+               :distance_km, :n_points, :n_segments, :avg_speed_kmph, :max_speed_kmph,
+               :moving_min, :stopped_min, :from_waypoint, :to_waypoint,
+               :start_lat, :start_lng, :end_lat, :end_lng)
+        """), _trip_row(trip, upload_id))
+        return int(r.lastrowid)
 
 
-def list_trips_for_upload(upload_id: int) -> List[Dict]:
+def _trip_row(t: Any, upload_id: int, trip_id: int | None = None) -> Dict:
+    row = {
+        "upload_id": upload_id,
+        "vehicle_id": t.vehicle_id,
+        "start_ts": t.start_ts, "end_ts": t.end_ts,
+        "duration_min": t.duration_min, "distance_km": t.distance_km,
+        "n_points": t.n_points, "n_segments": t.n_segments,
+        "avg_speed_kmph": t.avg_speed_kmph, "max_speed_kmph": t.max_speed_kmph,
+        "moving_min": t.moving_min, "stopped_min": t.stopped_min,
+        "from_waypoint": t.from_waypoint, "to_waypoint": t.to_waypoint,
+        "start_lat": t.start_lat, "start_lng": t.start_lng,
+        "end_lat": t.end_lat, "end_lng": t.end_lng,
+    }
+    if trip_id is not None:
+        row["id"] = trip_id
+    return row
+
+
+def get_trip_for_upload(upload_id: int) -> Optional[Dict]:
     bootstrap()
     with get_engine().connect() as c:
-        rows = c.execute(text("""
-            SELECT * FROM ri_trips WHERE upload_id=:u ORDER BY seq
-        """), {"u": upload_id}).mappings().all()
-    return [dict(r) for r in rows]
+        r = c.execute(text("SELECT * FROM ri_trips WHERE upload_id=:u"),
+                      {"u": upload_id}).mappings().first()
+        return dict(r) if r else None
 
 
 def get_trip(trip_id: int) -> Optional[Dict]:
@@ -368,6 +441,69 @@ def get_trip(trip_id: int) -> Optional[Dict]:
 def mark_trip_analyzed(trip_id: int) -> None:
     with get_engine().begin() as c:
         c.execute(text("UPDATE ri_trips SET analyzed=1 WHERE id=:id"), {"id": trip_id})
+
+
+# --- DAO: segments (N rows per trip) ----------------------------------------
+def replace_segments(trip_id: int, segments: Iterable[Any]) -> List[int]:
+    """Drop existing segments for the trip and insert the fresh list."""
+    bootstrap()
+    ids: List[int] = []
+    with get_engine().begin() as c:
+        c.execute(text("DELETE FROM ri_segments WHERE trip_id=:t"), {"t": trip_id})
+        for s in segments:
+            r = c.execute(text("""
+                INSERT INTO ri_segments
+                  (trip_id, seq, start_ts, end_ts, duration_min, distance_km,
+                   n_points, avg_speed_kmph, max_speed_kmph, moving_min,
+                   stopped_min, from_waypoint, to_waypoint,
+                   start_lat, start_lng, end_lat, end_lng)
+                VALUES
+                  (:trip_id, :seq, :start_ts, :end_ts, :duration_min, :distance_km,
+                   :n_points, :avg_speed_kmph, :max_speed_kmph, :moving_min,
+                   :stopped_min, :from_waypoint, :to_waypoint,
+                   :start_lat, :start_lng, :end_lat, :end_lng)
+            """), {
+                "trip_id": trip_id, "seq": s.seq,
+                "start_ts": s.start_ts, "end_ts": s.end_ts,
+                "duration_min": s.duration_min, "distance_km": s.distance_km,
+                "n_points": s.n_points, "avg_speed_kmph": s.avg_speed_kmph,
+                "max_speed_kmph": s.max_speed_kmph,
+                "moving_min": s.moving_min, "stopped_min": s.stopped_min,
+                "from_waypoint": s.from_waypoint, "to_waypoint": s.to_waypoint,
+                "start_lat": s.start_lat, "start_lng": s.start_lng,
+                "end_lat": s.end_lat, "end_lng": s.end_lng,
+            })
+            ids.append(int(r.lastrowid))
+    return ids
+
+
+def list_segments_for_trip(trip_id: int) -> List[Dict]:
+    bootstrap()
+    with get_engine().connect() as c:
+        rows = c.execute(text("""
+            SELECT * FROM ri_segments WHERE trip_id=:t ORDER BY seq
+        """), {"t": trip_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def get_segment(segment_id: int) -> Optional[Dict]:
+    with get_engine().connect() as c:
+        r = c.execute(text("SELECT * FROM ri_segments WHERE id=:id"),
+                      {"id": segment_id}).mappings().first()
+        return dict(r) if r else None
+
+
+# Deprecated alias so older callers in pipeline.py don't break instantly.
+def list_trips_for_upload(upload_id: int) -> List[Dict]:
+    t = get_trip_for_upload(upload_id)
+    return [t] if t else []
+
+
+def insert_trips(*_a, **_kw):
+    raise NotImplementedError(
+        "insert_trips() is removed — use upsert_trip(upload_id, TripSummary) "
+        "followed by replace_segments(trip_id, segments)."
+    )
 
 
 # --- DAO: analysis runs ------------------------------------------------------
@@ -412,12 +548,62 @@ def get_run(run_id: int) -> Optional[Dict]:
 
 
 def get_latest_done_run_for_trip(trip_id: int) -> Optional[Dict]:
+    """Return the latest WHOLE-TRIP analysis run (not segment-scoped). Segment
+    runs are persisted with ``scope=segment`` in their params_json — we
+    exclude them via a simple LIKE so trip-level fetches don't accidentally
+    pick up a sub-segment's numbers."""
     with get_engine().connect() as c:
         r = c.execute(text("""
             SELECT * FROM ri_analysis_runs
             WHERE trip_id=:t AND status='done'
+              AND params_json NOT LIKE '%"scope": "segment"%'
             ORDER BY finished_at DESC LIMIT 1
         """), {"t": trip_id}).mappings().first()
+        return dict(r) if r else None
+
+
+def fleet_cost_opportunities(limit_trips: int = 500) -> List[Dict]:
+    """One row per trip (its latest whole-trip run) carrying the STRUCTURED cost
+    opportunities + breakdown + efficiency — the clean source for the fleet
+    recommendations feed (no NL-text round-trip). Trips without a done run or
+    without cost metrics are skipped."""
+    with get_engine().connect() as c:
+        rows = c.execute(text("""
+            SELECT t.id AS trip_id, t.vehicle_id, t.from_waypoint, t.to_waypoint,
+                   t.distance_km, r.id AS run_id, r.finished_at,
+                   cm.opportunities_json, cm.breakdown_json,
+                   rm.efficiency_json
+            FROM ri_trips t
+            JOIN ri_analysis_runs r ON r.id = (
+                SELECT r2.id FROM ri_analysis_runs r2
+                WHERE r2.trip_id = t.id AND r2.status = 'done'
+                  AND r2.params_json NOT LIKE '%"scope": "segment"%'
+                ORDER BY r2.finished_at DESC LIMIT 1
+            )
+            JOIN ri_cost_metrics cm ON cm.run_id = r.id
+            LEFT JOIN ri_route_metrics rm ON rm.run_id = r.id
+            ORDER BY r.finished_at DESC
+            LIMIT :lim
+        """), {"lim": limit_trips}).mappings().all()
+    out: List[Dict] = []
+    for r in rows:
+        d = dict(r)
+        d["opportunities"] = jl(d.pop("opportunities_json")) or []
+        d["breakdown"] = jl(d.pop("breakdown_json")) or {}
+        d["efficiency"] = jl(d.pop("efficiency_json")) or {}
+        out.append(d)
+    return out
+
+
+def get_latest_done_run_for_segment(segment_id: int) -> Optional[Dict]:
+    """Return the latest run that was scoped to the given segment."""
+    with get_engine().connect() as c:
+        r = c.execute(text("""
+            SELECT * FROM ri_analysis_runs
+            WHERE status='done'
+              AND params_json LIKE :pat
+            ORDER BY finished_at DESC LIMIT 1
+        """), {"pat": f'%"segment_id": {segment_id}%'}).mappings().first()
         return dict(r) if r else None
 
 

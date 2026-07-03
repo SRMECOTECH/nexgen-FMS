@@ -38,9 +38,10 @@ class NormalizedFrame:
 
 
 @dataclass
-class DetectedTrip:
-    """One auto-detected trip = a moving segment bracketed by long stops."""
-    seq: int
+class DetectedSegment:
+    """A driving segment within a trip — the block between two long stops.
+    ONE Excel = ONE trip; the trip has N of these segments."""
+    seq: int                       # 1..N within the parent trip
     start_ts: pd.Timestamp
     end_ts: pd.Timestamp
     duration_min: float
@@ -56,6 +57,35 @@ class DetectedTrip:
     start_lng: float
     end_lat: float
     end_lng: float
+
+
+# ``DetectedTrip`` kept as an alias for one release so any external caller that
+# imported the old name still works. New code should use DetectedSegment.
+DetectedTrip = DetectedSegment
+
+
+@dataclass
+class TripSummary:
+    """Whole-Excel trip = the entire journey from the file's first ping to
+    its last ping, with overall metrics and the segments it contains."""
+    vehicle_id: str
+    start_ts: pd.Timestamp
+    end_ts: pd.Timestamp
+    duration_min: float
+    distance_km: float
+    n_points: int
+    n_segments: int
+    avg_speed_kmph: float        # average MOVING speed across the whole trip
+    max_speed_kmph: float
+    moving_min: float
+    stopped_min: float
+    from_waypoint: Optional[str]
+    to_waypoint: Optional[str]
+    start_lat: float
+    start_lng: float
+    end_lat: float
+    end_lng: float
+    segments: List["DetectedSegment"] = field(default_factory=list)
 
 
 # --- Excel reader ------------------------------------------------------------
@@ -139,18 +169,22 @@ def load_gps_excel(path: str) -> NormalizedFrame:
     )
 
 
-# --- trip auto-detection -----------------------------------------------------
+# --- segment auto-detection --------------------------------------------------
+# IMPORTANT: ONE Excel = ONE trip. The function below splits the trip into
+# driving SEGMENTS — the moving blocks between long stops. It does NOT create
+# multiple trips. See summarize_trip() for the whole-journey roll-up.
 
-def detect_trips(
+def detect_segments(
     df: pd.DataFrame,
     stop_min_minutes: float | None = None,
     min_distance_km: float | None = None,
     min_duration_min: float | None = None,
-) -> List[DetectedTrip]:
-    """Segment the GPS stream into trips. A trip ends when the vehicle is
-    stopped for ≥ ``stop_min_minutes`` (default 30 min) and resumes on the
-    next moving ping. Tiny segments (under min_distance/min_duration) are
-    discarded so we don't generate trips out of brief depot shuffles.
+) -> List[DetectedSegment]:
+    """Split a trip's GPS stream into driving segments. A segment ends when
+    the vehicle is stopped for ≥ ``stop_min_minutes`` (default 30 min) and a
+    new one begins on the next moving ping. Tiny segments (under
+    min_distance/min_duration) are discarded so brief depot shuffles don't
+    pollute the segment list.
 
     The vendor's ``i_trip_no`` is ignored because it's always 0 in the
     Excel feed (TCIL doesn't pre-segment for us).
@@ -187,11 +221,11 @@ def detect_trips(
     # Convert boundaries into [start, end] index pairs.
     starts = [0] + trip_boundaries
     ends = [b - 1 for b in trip_boundaries] + [len(df) - 1]
-    segments = [(s, e) for s, e in zip(starts, ends) if s <= e]
+    seg_ranges = [(s, e) for s, e in zip(starts, ends) if s <= e]
 
-    trips: List[DetectedTrip] = []
+    segments: List[DetectedSegment] = []
     seq = 0
-    for s_idx, e_idx in segments:
+    for s_idx, e_idx in seg_ranges:
         seg = df.iloc[s_idx : e_idx + 1]
         if seg.empty:
             continue
@@ -207,8 +241,8 @@ def detect_trips(
         to_wp = _last_nonnull(seg, "Waypoint2") or _last_nonnull(seg, "Waypoint1")
 
         seq += 1
-        trips.append(
-            DetectedTrip(
+        segments.append(
+            DetectedSegment(
                 seq=seq,
                 start_ts=seg["Date Time"].iloc[0],
                 end_ts=seg["Date Time"].iloc[-1],
@@ -227,7 +261,49 @@ def detect_trips(
                 end_lng=float(seg["longitude"].iloc[-1]),
             )
         )
-    return trips
+    return segments
+
+
+# Deprecated alias — keep until nothing imports the old name.
+detect_trips = detect_segments
+
+
+def summarize_trip(nf: "NormalizedFrame", segments: List[DetectedSegment] | None = None) -> TripSummary:
+    """Roll the entire normalized DataFrame up into ONE trip header.
+
+    Whole-journey metrics use the first and last ping of the Excel; from/to
+    waypoints come from the first/last non-null vendor labels; per-segment
+    metrics live on the returned summary's ``segments`` list (computed via
+    :func:`detect_segments` when not provided).
+    """
+    df = nf.df
+    if df.empty:
+        raise ValueError("cannot summarize an empty trip")
+    if segments is None:
+        segments = detect_segments(df)
+    moving_sec = float(df.loc[df["Is_Moving"] == 1, "Time_Diff_Seconds"].sum())
+    stopped_sec = float(df.loc[df["Is_Moving"] == 0, "Time_Diff_Seconds"].sum())
+    moving_speeds = df.loc[df["Is_Moving"] == 1, "Speed_kmh"]
+    return TripSummary(
+        vehicle_id=nf.vehicle_id,
+        start_ts=df["Date Time"].iloc[0],
+        end_ts=df["Date Time"].iloc[-1],
+        duration_min=round((df["Date Time"].iloc[-1] - df["Date Time"].iloc[0]).total_seconds() / 60, 1),
+        distance_km=round(float(df["Distance_km"].sum()), 2),
+        n_points=int(len(df)),
+        n_segments=len(segments),
+        avg_speed_kmph=round(float(moving_speeds.mean()) if len(moving_speeds) else 0.0, 1),
+        max_speed_kmph=round(float(df["Speed_kmh"].max()), 1),
+        moving_min=round(moving_sec / 60, 1),
+        stopped_min=round(stopped_sec / 60, 1),
+        from_waypoint=_first_nonnull(df, "Waypoint1"),
+        to_waypoint=_last_nonnull(df, "Waypoint2") or _last_nonnull(df, "Waypoint1"),
+        start_lat=float(df["latitude"].iloc[0]),
+        start_lng=float(df["longitude"].iloc[0]),
+        end_lat=float(df["latitude"].iloc[-1]),
+        end_lng=float(df["longitude"].iloc[-1]),
+        segments=segments,
+    )
 
 
 def _first_nonnull(df: pd.DataFrame, col: str) -> Optional[str]:

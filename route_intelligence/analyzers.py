@@ -17,16 +17,32 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from route_intelligence import cost_config
+from route_intelligence import osrm_gateway
+
 
 # ============================================================================
 # Business: cost model
 # ============================================================================
 @dataclass
 class CostParams:
-    fuel_price_per_liter: float = 100.0
-    fuel_efficiency_kmpl: float = 4.0
-    driver_wage_per_hour: float = 150.0
-    idle_fuel_consumption_lph: float = 1.5
+    # Defaults pull from the live, UI-editable config so a BusinessAnalyzer()
+    # built without explicit params still uses the configured numbers.
+    fuel_price_per_liter: float = None  # type: ignore[assignment]
+    fuel_efficiency_kmpl: float = None  # type: ignore[assignment]
+    driver_wage_per_hour: float = None  # type: ignore[assignment]
+    idle_fuel_consumption_lph: float = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        cfg = cost_config.load()
+        if self.fuel_price_per_liter is None:
+            self.fuel_price_per_liter = cfg["fuel_price_per_liter"]
+        if self.fuel_efficiency_kmpl is None:
+            self.fuel_efficiency_kmpl = cfg["fuel_efficiency_kmpl"]
+        if self.driver_wage_per_hour is None:
+            self.driver_wage_per_hour = cfg["driver_wage_per_hour"]
+        if self.idle_fuel_consumption_lph is None:
+            self.idle_fuel_consumption_lph = cfg["idle_fuel_consumption_lph"]
 
 
 class BusinessAnalyzer:
@@ -63,43 +79,59 @@ class BusinessAnalyzer:
         }
 
     def cost_savings_opportunities(self, df_agg: pd.DataFrame) -> List[Dict]:
+        # Live, UI-editable thresholds & multipliers (see route_intelligence/cost_config.py).
+        cfg = cost_config.load()
+        month = cfg["trips_per_month"]
+
         opps: List[Dict] = []
         stopped_hours = float(df_agg["stopped_time_sec"].sum()) / 3600
         moving_hours = float(df_agg["moving_time_sec"].sum()) / 3600
 
-        if stopped_hours > 2:
+        if stopped_hours > cfg["idle_hours_trigger"]:
             idle_waste = stopped_hours * self.p.idle_fuel_consumption_lph * self.p.fuel_price_per_liter
-            potential = idle_waste * 0.3
+            pct = cfg["idle_savings_pct"]
+            potential = idle_waste * pct
             opps.append({
                 "category": "Idle Time Reduction",
                 "priority": "HIGH",
                 "current_waste_inr": round(idle_waste, 2),
                 "potential_savings_inr": round(potential, 2),
-                "monthly_savings_inr": round(potential * 30, 2),
-                "recommendation": f"Reduce idle time by 30% (save ₹{potential:.0f}/trip).",
+                "monthly_savings_inr": round(potential * month, 2),
+                "recommendation": f"Reduce idle time by {pct * 100:.0f}% (save ₹{potential:.0f}/trip).",
+                # trigger evidence — powers the detailed report
+                "metrics": {"stopped_hours": round(stopped_hours, 2),
+                            "trigger": f"idle > {cfg['idle_hours_trigger']}h"},
             })
 
-        if len(df_agg) and float(df_agg["avg_moving_speed_kmph"].mean()) < 40:
-            time_saved = moving_hours * 0.15
+        speed_target = cfg["speed_target_kmph"]
+        if len(df_agg) and float(df_agg["avg_moving_speed_kmph"].mean()) < speed_target:
+            avg_speed = float(df_agg["avg_moving_speed_kmph"].mean())
+            time_saved = moving_hours * cfg["route_opt_time_saved_pct"]
             savings = time_saved * self.p.driver_wage_per_hour
             opps.append({
                 "category": "Route Optimization",
                 "priority": "MEDIUM",
                 "current_waste_inr": 0,
                 "potential_savings_inr": round(savings, 2),
-                "monthly_savings_inr": round(savings * 30, 2),
-                "recommendation": "Reroute or coach driver to lift average moving speed to ~45 km/h.",
+                "monthly_savings_inr": round(savings * month, 2),
+                "recommendation": f"Reroute or coach driver to lift average moving speed to ~{speed_target:.0f} km/h.",
+                "metrics": {"avg_moving_speed_kmph": round(avg_speed, 1),
+                            "trigger": f"avg speed < {speed_target:.0f} km/h"},
             })
 
-        peak = df_agg[(df_agg["window_start"].dt.hour >= 8) & (df_agg["window_start"].dt.hour <= 10)]
-        if len(df_agg) and len(peak) > len(df_agg) * 0.3:
+        h_start, h_end = cfg["peak_hour_start"], cfg["peak_hour_end"]
+        peak = df_agg[(df_agg["window_start"].dt.hour >= h_start) & (df_agg["window_start"].dt.hour <= h_end)]
+        peak_share = (len(peak) / len(df_agg)) if len(df_agg) else 0.0
+        if len(df_agg) and peak_share > cfg["peak_share_trigger"]:
             opps.append({
                 "category": "Peak Hour Avoidance",
                 "priority": "MEDIUM",
                 "current_waste_inr": 0,
-                "potential_savings_inr": 500,
-                "monthly_savings_inr": 15_000,
-                "recommendation": "Start trips before 7 AM to dodge peak-hour congestion.",
+                "potential_savings_inr": cfg["peak_per_trip_savings_inr"],
+                "monthly_savings_inr": cfg["peak_monthly_savings_inr"],
+                "recommendation": f"Start trips before {h_start} AM to dodge peak-hour congestion.",
+                "metrics": {"peak_window_share_pct": round(peak_share * 100, 1),
+                            "trigger": f">{cfg['peak_share_trigger'] * 100:.0f}% of windows in {h_start}-{h_end}h"},
             })
 
         return opps
@@ -154,12 +186,29 @@ class RouteAnalyzer:
         e_lat, e_lon = float(df.iloc[-1]["latitude"]), float(df.iloc[-1]["longitude"])
         straight = _haversine(s_lat, s_lon, e_lat, e_lon)
         actual = float(df["Distance_km"].sum()) if "Distance_km" in df else 0.0
-        eff = straight / actual if actual > 0 else 0.0
+
+        # Baseline for "excess" is the OPTIMAL ROAD distance from OSRM when the
+        # engine is reachable (a real, drivable lower bound), and only falls back
+        # to the haversine straight line when OSRM is unavailable. Comparing the
+        # driven distance to the road optimum is far more meaningful than
+        # comparing it to a straight line that no truck could ever drive.
+        osrm = osrm_gateway.road_distance_km([(s_lat, s_lon), (e_lat, e_lon)])
+        if osrm and osrm.get("road_distance_km"):
+            baseline = float(osrm["road_distance_km"])
+            baseline_source = "osrm_road"
+        else:
+            baseline = straight
+            baseline_source = "straight_line"
+
+        eff = baseline / actual if actual > 0 else 0.0
         return {
             "straight_line_distance_km": round(straight, 2),
+            "osrm_road_distance_km": round(float(osrm["road_distance_km"]), 2) if osrm and osrm.get("road_distance_km") else None,
+            "baseline_distance_km": round(baseline, 2),
+            "baseline_source": baseline_source,
             "actual_distance_km": round(actual, 2),
             "route_efficiency": round(eff, 3),
-            "excess_distance_km": round(actual - straight, 2),
+            "excess_distance_km": round(actual - baseline, 2),
             "excess_percentage": round((1 - eff) * 100, 1) if eff else 0.0,
             "interpretation": _interpret_efficiency(eff),
         }
@@ -310,6 +359,46 @@ class WaypointAnalyzer:
                 "lat": float(seg["latitude"].mean()),
                 "lng": float(seg["longitude"].mean()),
                 "n_points": int(len(seg)),
+            })
+        return out
+
+    @staticmethod
+    def by_day(df: pd.DataFrame) -> List[Dict]:
+        """Per-day breakdown of a trip's GPS frame. Each output row covers a
+        single calendar day and reports distance, moving/stopped time, ping
+        count, max speed, and waypoints touched on that day. Multi-day trips
+        produce N rows; single-day trips produce 1."""
+        if df.empty or "Date Time" not in df.columns:
+            return []
+        d = df.copy()
+        d["date"] = pd.to_datetime(d["Date Time"]).dt.date
+        out: List[Dict] = []
+        for day, sub in d.groupby("date", sort=True):
+            moving_sec = float(sub.loc[sub["Is_Moving"] == 1, "Time_Diff_Seconds"].sum()) \
+                if "Is_Moving" in sub and "Time_Diff_Seconds" in sub else 0.0
+            stopped_sec = float(sub.loc[sub["Is_Moving"] == 0, "Time_Diff_Seconds"].sum()) \
+                if "Is_Moving" in sub and "Time_Diff_Seconds" in sub else 0.0
+            dist_km = float(sub["Distance_km"].sum()) if "Distance_km" in sub else 0.0
+            moving_speeds = sub.loc[sub["Is_Moving"] == 1, "Speed_kmh"] \
+                if "Is_Moving" in sub and "Speed_kmh" in sub else pd.Series(dtype=float)
+            waypoints = (
+                sorted(set(sub["Waypoint1"].dropna().astype(str).tolist()))
+                if "Waypoint1" in sub else []
+            )
+            out.append({
+                "date": day.isoformat(),
+                "day_of_week": pd.Timestamp(day).day_name(),
+                "n_pings": int(len(sub)),
+                "distance_km": round(dist_km, 2),
+                "moving_min": round(moving_sec / 60, 1),
+                "stopped_min": round(stopped_sec / 60, 1),
+                "duration_min": round((moving_sec + stopped_sec) / 60, 1),
+                "avg_moving_kmph": round(float(moving_speeds.mean()) if len(moving_speeds) else 0.0, 1),
+                "max_speed_kmph": round(float(sub["Speed_kmh"].max()) if "Speed_kmh" in sub else 0.0, 1),
+                "first_ts": str(sub["Date Time"].min()),
+                "last_ts":  str(sub["Date Time"].max()),
+                "waypoints_touched": waypoints[:12],   # keep it reasonable
+                "n_waypoints": len(waypoints),
             })
         return out
 

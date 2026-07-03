@@ -39,15 +39,31 @@ Set-Location "C:\Users\Sanjoy Chattopadhyay\PycharmProjects\nextGen-FMS"
 ### Day-to-day (two terminals)
 
 ```powershell
-# Terminal 1 — backend  (http://localhost:8000)
+# Terminal 1 — backend  (http://localhost:9001)
+# Port is read from .env (FMS_BACKEND_PORT). Sits alongside smart-truck on 8000.
 Set-Location "C:\Users\Sanjoy Chattopadhyay\PycharmProjects\nextGen-FMS"
 .\.venv\Scripts\Activate.ps1
-uvicorn backend.app.main:app --reload --port 8000 `
+uvicorn backend.app.main:app --reload --port $env:FMS_BACKEND_PORT `
     --reload-dir backend --reload-dir lakehouse
+# or simply:  python -m backend.app.main   (reads FMS_BACKEND_PORT itself)
 
-# Terminal 2 — frontend  (http://localhost:5173)
+# Terminal 2 — frontend  (http://localhost:6173)
+# Port is read from .env (FMS_FRONTEND_PORT). Sits alongside smart-truck on 5173.
 Set-Location "C:\Users\Sanjoy Chattopadhyay\PycharmProjects\nextGen-FMS\frontend"
 npm run dev
+```
+
+### ML subscription API (smart-truck)
+
+The backend proxies every model call to **smart-truck**'s ML subscription API
+(see `../smart-truck/docs/API_REFERENCE.md`). Make sure it is running on the
+default `localhost:8001` before the AI pages render, and that `ML_API_KEY` in
+`.env` is a valid subscription key.
+
+```powershell
+# Terminal 3 — smart-truck ml_service  (http://localhost:8001)
+Set-Location "C:\Users\Sanjoy Chattopadhyay\PycharmProjects\smart-truck"
+uvicorn ml_service.app.main:app --reload --port 8001
 ```
 
 > **PowerShell tip:** your username has a space, so paths must be quoted.

@@ -35,5 +35,8 @@ Write-Host ""
 Write-Host "Done. To use the venv in a new terminal:" -ForegroundColor Green
 Write-Host "    .\.venv\Scripts\Activate.ps1" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Then start the backend:" -ForegroundColor Green
-Write-Host "    uvicorn backend.app.main:app --reload --port 8000 --reload-dir backend --reload-dir lakehouse" -ForegroundColor Yellow
+Write-Host "Then start the backend (port comes from .env: FMS_BACKEND_PORT=9001):" -ForegroundColor Green
+Write-Host "    uvicorn backend.app.main:app --reload --port `$env:FMS_BACKEND_PORT --reload-dir backend --reload-dir lakehouse" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Frontend (port comes from .env: FMS_FRONTEND_PORT=6173):" -ForegroundColor Green
+Write-Host "    Set-Location frontend; npm run dev" -ForegroundColor Yellow

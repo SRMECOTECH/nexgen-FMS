@@ -1,12 +1,15 @@
 """
 nextGen-FMS backend API entry point.
 
-Run with:
-    uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+Run with (port 9001 — matches the frontend's VITE_API_URL; do NOT use 8000,
+that belongs to the smart-truck backend):
+    uvicorn backend.app.main:app --host 0.0.0.0 --port 9001 --reload
+or simply:
+    python -m backend.app.main   # reads FMS_BACKEND_PORT (9001) from .env
 
-Data source: neXgen-Lakehouse (Iceberg) via the lakehouse/ package.
-Currently in MOCK mode — flip USE_MOCK_DATA=false in .env once credentials
-are available.
+Data source: Excel feeds (data/*.xlsx) → local MySQL warehouse via the
+lakehouse/ package. Iceberg/MinIO/ClickHouse are hard-disabled
+(DISABLE_ICEBERG=true in .env) and only wired up on demand.
 """
 
 import logging
@@ -24,7 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.api import dashboard, trips, system, ml, data, operations, analytics, gps, route_intel
+from backend.app.api import dashboard, trips, system, ml, data, operations, analytics, gps, route_intel, ai, observe
 from lakehouse.settings import get_settings
 
 logging.basicConfig(
@@ -87,6 +90,8 @@ app.include_router(operations.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 app.include_router(gps.router, prefix="/api/v1")
 app.include_router(route_intel.router, prefix="/api/v1")
+app.include_router(ai.router, prefix="/api/v1")
+app.include_router(observe.router, prefix="/api/v1")
 
 
 @app.on_event("startup")
@@ -103,6 +108,13 @@ def _warm_caches():
     threading.Thread(target=_go, daemon=True).start()
 
 
+@app.on_event("shutdown")
+async def _close_ml_client():
+    """Drain the ML proxy's HTTP keep-alive pool when uvicorn shuts down."""
+    from backend.app.services import ml_client
+    await ml_client.aclose()
+
+
 @app.on_event("startup")
 def _launch_streamlit():
     """Spawn the 'Detailed Analysis of GPS Data' Streamlit page in the
@@ -117,19 +129,43 @@ def _launch_streamlit():
     threading.Thread(target=_go, daemon=True).start()
 
 
+def _describe_data_source() -> dict:
+    """Honest description of where data actually comes from, based on the live
+    .env config — not a stale label. Today: Excel feeds → local MySQL warehouse,
+    with Iceberg hard-disabled. Only reports Iceberg when it is genuinely wired."""
+    import os
+
+    if settings.use_mock_data:
+        return {"mode": "MOCK", "ingest": "fixtures", "warehouse": None}
+
+    warehouse_url = os.getenv("WAREHOUSE_URL", "")
+    if warehouse_url.startswith("mysql"):
+        engine = "MYSQL"
+    elif "postgres" in warehouse_url:
+        engine = "POSTGRES"
+    else:
+        engine = "WAREHOUSE"
+
+    ingest = os.getenv("INGEST_SOURCE", "sample").lower()
+    iceberg_live = ingest == "iceberg" and not settings.disable_iceberg
+    ingest_label = "ICEBERG" if iceberg_live else "EXCEL"
+
+    return {
+        "mode": f"{ingest_label}→{engine}",
+        "ingest": ingest_label,
+        "warehouse": engine,
+        "iceberg_disabled": settings.disable_iceberg,
+    }
+
+
 @app.get("/health")
 def health():
-    if settings.use_mock_data:
-        src = "MOCK"
-    elif not settings.clickhouse_password:
-        src = "LAKEHOUSE"   # via PyIceberg fallback
-    else:
-        src = "LAKEHOUSE"
+    src = _describe_data_source()
     return {
         "status": "ok",
         "service": "nextgen-fms-api",
-        "data_source": src,
-        "lakehouse_url": settings.lakehouse_base_url,
+        "data_source": src["mode"],
+        **src,
     }
 
 
@@ -146,7 +182,25 @@ def api_root():
     }
 
 
-data_mode = "MOCK" if settings.use_mock_data else (
-    "ICEBERG_FALLBACK" if not settings.clickhouse_password else "LIVE_CH"
+logger.info(
+    "neXgen-FMS API ready — data_mode=%s, routes=%d",
+    _describe_data_source()["mode"],
+    len(app.routes),
 )
-logger.info("neXgen-FMS API ready — data_mode=%s, routes=%d", data_mode, len(app.routes))
+
+
+if __name__ == "__main__":
+    # Allows `python -m backend.app.main` and reads the port from .env.
+    # Keeps the dev workflow port-config in one place (FMS_BACKEND_PORT).
+    import os
+    import uvicorn
+
+    host = os.getenv("FMS_BACKEND_HOST", "0.0.0.0")
+    port = int(os.getenv("FMS_BACKEND_PORT", "9001"))
+    uvicorn.run(
+        "backend.app.main:app",
+        host=host,
+        port=port,
+        reload=True,
+        reload_dirs=["backend", "lakehouse"],
+    )

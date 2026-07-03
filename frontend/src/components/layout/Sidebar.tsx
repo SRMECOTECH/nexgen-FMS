@@ -1,83 +1,86 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, Truck, Users, MapPin, Sparkles, Activity, Map as MapIcon,
-  Bell, Workflow, Database, Table2, Cable, Cpu, FileSearch, ScrollText, LifeBuoy,
-  Settings, GitBranch, Power, ShieldCheck, Brain, Route, Satellite, BedDouble, Building2,
-  Wand2, FileSpreadsheet, Microscope, ExternalLink,
+  Activity, Wand2, FileSpreadsheet, Microscope, ExternalLink,
+  Compass, Eye, Brain, TrendingUp, Lightbulb, Zap, GraduationCap,
 } from 'lucide-react';
 import { fetchHealth, type HealthStatus } from '../../lib/api';
 
 interface NavItem {
   to: string;
   label: string;
-  icon: typeof LayoutDashboard;
-  external?: boolean;   // opens in a new tab via window.open
+  icon: typeof Activity;
+  external?: boolean;
 }
 
 interface NavSection {
   title: string;
+  /** One-line subtitle shown under the section header. */
+  hint?: string;
   items: NavItem[];
 }
 
+// ============================================================================
+// AI Operating System IA — organised by *intelligence stage*, not DB tables.
+// The shape (Observe → Understand → Predict → Recommend → Act → Learn) is the
+// loop the platform thinks in. Each section names a verb, not an object.
+// Route Intelligence keeps its current pages and lives under "Understand".
+// ============================================================================
 const sections: NavSection[] = [
   {
-    title: 'Overview',
+    title: 'Mission Control',
+    hint: 'What deserves your attention right now',
     items: [
-      { to: '/',           label: 'Dashboard',  icon: LayoutDashboard },
-      { to: '/map',        label: 'Live Map',   icon: MapIcon },
-      { to: '/monitoring', label: 'Monitoring', icon: Activity },
+      { to: '/mission-control', label: 'Today',             icon: Compass },
+      { to: '/live-thinking',   label: 'Live AI Thinking',  icon: Zap },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Observe',
+    hint: 'Raw signal from the fleet',
     items: [
-      { to: '/trips',     label: 'Trips',      icon: MapPin },
-      { to: '/partners',  label: 'Partners',   icon: Building2 },
-      { to: '/vehicles',  label: 'Vehicles',   icon: Truck },
-      { to: '/drivers',   label: 'Drivers',    icon: Users },
-      { to: '/alerts',    label: 'Alerts',     icon: Bell },
-      { to: '/geofences', label: 'Geofences',  icon: MapIcon },
+      { to: '/observe', label: 'Real-time telemetry', icon: Eye },
     ],
   },
   {
-    title: 'Intelligence',
+    title: 'Understand',
+    hint: 'AI-derived structure & insight',
     items: [
-      { to: '/ml',           label: 'ML Insights',     icon: Sparkles },
-      { to: '/gps',          label: 'GPS Feed',        icon: Satellite },
-      { to: '/halts',        label: 'Halts & Rests',   icon: BedDouble },
-      { to: '/analytics/behaviour', label: 'Behavioural Patterns', icon: Brain },
-      { to: '/analytics/lanes',     label: 'Lane Volume', icon: Route },
-      { to: '/ml/pipelines', label: 'Pipelines',       icon: Workflow },
-      { to: '/ml/models',    label: 'Model Registry',  icon: GitBranch },
+      // Route Intelligence stays alive — the AI-OS shell wraps it instead of
+      // replacing it. Sub-routes (uploads / trips / segments / compare) are
+      // reachable from the page itself.
+      { to: '/route-intel',           label: 'Route Intelligence',              icon: FileSpreadsheet },
+      { to: '/route-intel/insights',  label: 'Route Insights Feed',             icon: Wand2 },
+      { to: '/understand',            label: 'Understand (overview)',           icon: Brain },
+      { to: 'http://127.0.0.1:8501',  label: 'Detailed GPS Analysis',           icon: Microscope, external: true },
     ],
   },
   {
-    title: 'Route Intelligence',
+    title: 'Predict',
+    hint: 'What will happen next',
     items: [
-      { to: '/route-intel',           label: 'Upload & Trips',                  icon: FileSpreadsheet },
-      { to: '/route-intel/insights',  label: 'AI Insights Feed',                icon: Wand2 },
-      { to: 'http://127.0.0.1:8501',  label: 'Detailed Analysis of GPS Data',   icon: Microscope, external: true },
+      { to: '/predict', label: 'ETA · SLA · Demand', icon: TrendingUp },
     ],
   },
   {
-    title: 'Data',
+    title: 'Recommend',
+    hint: "What you should do about it",
     items: [
-      { to: '/data/catalog',  label: 'Data Catalog',  icon: Database },
-      { to: '/data/browser',  label: 'Data Browser',  icon: Table2 },
-      { to: '/data/schema',   label: 'Schema',        icon: FileSearch },
-      { to: '/data/quality',  label: 'Data Quality',  icon: ShieldCheck },
-      { to: '/data/connectors', label: 'Connectors',  icon: Cable },
-      { to: '/data/devices',  label: 'IoT Devices',   icon: Cpu },
+      { to: '/recommend', label: 'Driver · Route · Hub', icon: Lightbulb },
     ],
   },
   {
-    title: 'System',
+    title: 'Act',
+    hint: 'Approve, dispatch, alert',
     items: [
-      { to: '/system/diagnostics', label: 'Diagnostics', icon: LifeBuoy },
-      { to: '/system/logs',        label: 'Logs',        icon: ScrollText },
-      { to: '/system/recovery',    label: 'Recovery',    icon: Power },
-      { to: '/system/config',      label: 'Configuration', icon: Settings },
+      { to: '/act', label: 'Actions & approvals', icon: Zap },
+    ],
+  },
+  {
+    title: 'Learn',
+    hint: 'Model registry & feedback loop',
+    items: [
+      { to: '/learn', label: 'Model registry', icon: GraduationCap },
     ],
   },
 ];
@@ -105,7 +108,7 @@ export default function Sidebar() {
         style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}
       >
         <div
-          className="w-9 h-9 rounded-lg flex items-center justify-center animate-pulse-amber"
+          className="w-9 h-9 rounded-lg flex items-center justify-center animate-pulse-accent"
           style={{ background: 'var(--accent)' }}
         >
           <Activity className="w-5 h-5" color="#000" />
@@ -114,21 +117,26 @@ export default function Sidebar() {
           <div className="text-sm font-bold tracking-wide" style={{ color: 'var(--fg-1)' }}>
             ne<span style={{ color: 'var(--accent)' }}>X</span>gen-FMS
           </div>
-          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--accent)' }}>
-            Fleet Intelligence
+          <div className="text-[10px] uppercase tracking-[0.15em]" style={{ color: 'var(--accent)' }}>
+            Fleet Intelligence OS
           </div>
         </div>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-5">
-        {sections.map(({ title, items }) => (
+        {sections.map(({ title, hint, items }) => (
           <div key={title}>
             <div
-              className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest"
+              className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-[0.18em]"
               style={{ color: 'var(--fg-3)' }}
             >
               {title}
             </div>
+            {hint && (
+              <div className="px-3 mb-2 text-[10px]" style={{ color: 'var(--fg-3)', opacity: 0.7 }}>
+                {hint}
+              </div>
+            )}
             <div className="space-y-0.5">
               {items.map(({ to, label, icon: Icon, external }) => external ? (
                 <a
@@ -177,9 +185,9 @@ export default function Sidebar() {
       >
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ background: live ? 'var(--success)' : 'var(--danger)' }} />
-          <span>v0.1.0 · {source}</span>
+          <span className="mono text-[10px]">v0.2.0 · {source}</span>
         </div>
-        <div className="mt-1 truncate" title={host}>warehouse @ {host}</div>
+        <div className="mt-1 text-[10px] mono truncate" title={host}>{host}</div>
       </div>
     </aside>
   );

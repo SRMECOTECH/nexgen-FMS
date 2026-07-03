@@ -164,3 +164,5 @@ htmlcov/
 # ==========================
 .terraform/
 *.tfstate*
+# runtime caches
+data/cache/

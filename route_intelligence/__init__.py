@@ -11,10 +11,14 @@ the React frontend with Recharts.
 
 from route_intelligence.data_adapter import (
     load_gps_excel,
-    detect_trips,
+    detect_segments,
+    detect_trips,         # deprecated alias of detect_segments
+    summarize_trip,
     aggregate_to_time_windows,
     NormalizedFrame,
-    DetectedTrip,
+    DetectedSegment,
+    DetectedTrip,         # deprecated alias of DetectedSegment
+    TripSummary,
 )
 from route_intelligence.analyzers import (
     BusinessAnalyzer,
@@ -24,10 +28,14 @@ from route_intelligence.analyzers import (
 
 __all__ = [
     "load_gps_excel",
+    "detect_segments",
     "detect_trips",
+    "summarize_trip",
     "aggregate_to_time_windows",
     "NormalizedFrame",
+    "DetectedSegment",
     "DetectedTrip",
+    "TripSummary",
     "BusinessAnalyzer",
     "RouteAnalyzer",
     "WaypointAnalyzer",
