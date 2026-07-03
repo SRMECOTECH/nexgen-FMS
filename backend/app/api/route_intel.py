@@ -401,6 +401,13 @@ def get_analysis(trip_id: int) -> Dict[str, Any]:
     bundle["run_id"] = run["id"]
     bundle["params_hash"] = run["params_hash"]
     bundle["model"] = ai.backend_name()
+    # Processing time (analysis wall-clock) for the Executive Summary KPI.
+    try:
+        started, finished = run.get("started_at"), run.get("finished_at")
+        bundle["processing_seconds"] = round((finished - started).total_seconds(), 1) \
+            if started and finished else None
+    except Exception:
+        bundle["processing_seconds"] = None
     return bundle
 
 
@@ -581,6 +588,8 @@ class CostConfigUpdate(BaseModel):
     fuel_efficiency_kmpl: Optional[float] = None
     driver_wage_per_hour: Optional[float] = None
     idle_fuel_consumption_lph: Optional[float] = None
+    maintenance_per_km: Optional[float] = None
+    toll_per_trip: Optional[float] = None
     trips_per_month: Optional[int] = None
     idle_hours_trigger: Optional[float] = None
     idle_savings_pct: Optional[float] = None
@@ -614,6 +623,46 @@ def put_cost_config(update: CostConfigUpdate) -> Dict[str, Any]:
 @router.post("/cost-config/reset")
 def reset_cost_config() -> Dict[str, Any]:
     return {"config": cost_config.reset(), "defaults": cost_config.DEFAULTS}
+
+
+# ---------------------------------------------------------------------------
+# ETA helper: city suggestions from smart-truck's route_summary table
+# (the names the ETA model actually has history for → best predictions).
+# ---------------------------------------------------------------------------
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def _smart_truck_engine():
+    import os
+    from sqlalchemy import create_engine
+    url = os.getenv("SMART_TRUCK_DB_URL", "mysql+pymysql://root:root@127.0.0.1:3306/smart_truck")
+    return create_engine(url, pool_pre_ping=True, future=True)
+
+
+@router.get("/eta/locations")
+def eta_locations(q: str = "", limit: int = 20) -> Dict[str, Any]:
+    """Autocomplete for ETA origin/destination — distinct origins + destinations
+    from smart-truck's ``route_summary`` (read-only). Lets the user re-send a
+    clean, model-known city name instead of a raw facility label."""
+    from sqlalchemy import text as _text
+    like = f"%{(q or '').strip()}%"
+    try:
+        with _smart_truck_engine().connect() as c:
+            rows = c.execute(_text("""
+                SELECT name FROM (
+                    SELECT DISTINCT origin AS name FROM route_summary WHERE origin LIKE :like
+                    UNION
+                    SELECT DISTINCT destination AS name FROM route_summary WHERE destination LIKE :like
+                ) t
+                WHERE name IS NOT NULL AND name <> ''
+                ORDER BY name
+                LIMIT :lim
+            """), {"like": like, "lim": limit}).scalars().all()
+        return {"locations": list(rows)}
+    except Exception as exc:  # noqa: BLE001 — smart-truck DB may be down
+        logger.warning("eta/locations: smart_truck DB unreachable (%s)", exc)
+        return {"locations": [], "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------

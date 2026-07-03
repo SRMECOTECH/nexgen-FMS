@@ -37,6 +37,8 @@ DEFAULTS: Dict[str, Any] = {
     "fuel_efficiency_kmpl": 4.0,        # km/L
     "driver_wage_per_hour": 150.0,      # ₹/h
     "idle_fuel_consumption_lph": 1.5,   # L/h burned while idling
+    "maintenance_per_km": 0.0,          # ₹/km maintenance (tyres, service, wear)
+    "toll_per_trip": 0.0,               # ₹/trip toll estimate
 
     # --- monthly projection ---
     "trips_per_month": 30,              # the "×30" that turns per-trip → per-month

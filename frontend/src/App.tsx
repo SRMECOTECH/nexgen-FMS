@@ -19,6 +19,7 @@ const Predict         = lazy(() => import('./pages/Predict.tsx'));
 const Recommend       = lazy(() => import('./pages/Recommend.tsx'));
 const Act             = lazy(() => import('./pages/Act.tsx'));
 const Learn           = lazy(() => import('./pages/Learn.tsx'));
+const Settings        = lazy(() => import('./pages/Settings.tsx'));
 
 // Route Intelligence — preserved exactly as it was, now nested under "Understand".
 const RouteIntelligence         = lazy(() => import('./pages/RouteIntelligence.jsx'));
@@ -50,6 +51,9 @@ export default function App() {
                 <Route path="/recommend"       element={<Recommend />} />
                 <Route path="/act"             element={<Act />} />
                 <Route path="/learn"           element={<Learn />} />
+
+                {/* System — configuration & database bootstrap */}
+                <Route path="/settings"        element={<Settings />} />
 
                 {/* Route Intelligence (kept) — upload-driven deep analysis */}
                 <Route path="/route-intel"                       element={<RouteIntelligence />} />

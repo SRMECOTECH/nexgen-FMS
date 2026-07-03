@@ -29,6 +29,36 @@ and [docs/DATA_REALITY.md](docs/DATA_REALITY.md) for the deep dives, and
 
 ## Quickstart
 
+### Fresh clone / fork — standalone setup (any machine)
+
+The app is **self-initialising**: give it a MySQL server and it creates the
+database + every table on first startup.
+
+```bash
+# 0. Prerequisites: Python 3.11+, Node 18+, MySQL 8 running locally (or any reachable MySQL/Postgres)
+
+# 1. Clone your fork
+git clone https://github.com/<you>/nexgen-FMS.git && cd nexgen-FMS
+
+# 2. Create the config file (the ONLY file you must touch)
+cp .env.example .env
+#    → edit ONE line: WAREHOUSE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/nextgen_fms
+#      (the nextgen_fms database does NOT need to exist — it is auto-created)
+
+# 3. Backend
+python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+python -m backend.app.main                        # ← auto-creates DB + all tables on startup
+
+# 4. Frontend (second terminal)
+cd frontend && npm install && npm run dev         # http://localhost:6173
+```
+
+Everything else is optional (smart-truck ML API, OSRM, Streamlit deep-dive —
+the app falls back gracefully when they're absent) and **every setting can be
+viewed/edited from the UI**: **System → Settings** shows the DB status, an
+"Initialize database" button, and every `.env` tunable with save-back to file.
+
 ### First-time setup (project-local venv)
 
 ```powershell

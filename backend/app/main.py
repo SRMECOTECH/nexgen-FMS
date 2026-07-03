@@ -27,7 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.api import dashboard, trips, system, ml, data, operations, analytics, gps, route_intel, ai, observe
+from backend.app.api import dashboard, trips, system, ml, data, operations, analytics, gps, route_intel, ai, observe, settings as settings_api
 from lakehouse.settings import get_settings
 
 logging.basicConfig(
@@ -92,6 +92,28 @@ app.include_router(gps.router, prefix="/api/v1")
 app.include_router(route_intel.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(observe.router, prefix="/api/v1")
+app.include_router(settings_api.router, prefix="/api/v1")
+
+
+@app.on_event("startup")
+def _bootstrap_database():
+    """Self-initialise the warehouse on a fresh clone: create the MySQL database
+    named in WAREHOUSE_URL plus every missing table (idempotent). Runs in a
+    background thread so an unreachable DB server never blocks startup — the
+    app keeps serving from mock/Excel fallbacks until MySQL is up, and the
+    Settings page can re-run this any time via POST /api/v1/settings/db/init."""
+    import threading
+    from lakehouse import bootstrap
+
+    def _go():
+        status = bootstrap.init_all()
+        if status["ok"]:
+            logger.info("startup: database bootstrap complete — warehouse ready")
+        else:
+            failed = {k: v.get("error") for k, v in status["steps"].items() if not v.get("ok")}
+            logger.warning("startup: database bootstrap incomplete: %s", failed)
+
+    threading.Thread(target=_go, daemon=True).start()
 
 
 @app.on_event("startup")

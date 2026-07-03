@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   Activity, Wand2, FileSpreadsheet, Microscope, ExternalLink,
-  Compass, Eye, Brain, TrendingUp, Lightbulb, Zap, GraduationCap,
+  Compass, Eye, Brain, TrendingUp, Lightbulb, Zap, GraduationCap, Settings,
 } from 'lucide-react';
 import { fetchHealth, type HealthStatus } from '../../lib/api';
 
@@ -81,6 +81,13 @@ const sections: NavSection[] = [
     hint: 'Model registry & feedback loop',
     items: [
       { to: '/learn', label: 'Model registry', icon: GraduationCap },
+    ],
+  },
+  {
+    title: 'System',
+    hint: 'Configuration & database',
+    items: [
+      { to: '/settings', label: 'Settings', icon: Settings },
     ],
   },
 ];

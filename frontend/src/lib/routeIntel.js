@@ -180,6 +180,21 @@ export async function riGetRecommendation(recId) {
   return data;   // { ...entry, cost_breakdown, efficiency, config_used, trip }
 }
 
+// --- smart-truck ML: ETA prediction (via the backend proxy /ml/*) --------
+export async function riPredictEta({ origin, destination, trip_km, trip_start, driver_id, vehicle_id }) {
+  const body = { origin, destination };
+  if (trip_km != null)   body.trip_km = trip_km;
+  if (trip_start)        body.trip_start = trip_start;
+  if (driver_id != null) body.driver_id = driver_id;
+  if (vehicle_id != null) body.vehicle_id = vehicle_id;
+  const { data } = await slow.post('/ml/predict/eta', body);
+  return data;   // { predicted_duration_minutes, route_avg_duration, estimation_source, osrm_distance_km }
+}
+export async function riEtaLocations(q, limit = 20) {
+  const { data } = await fast.get('/route-intel/eta/locations', { params: { q, limit } });
+  return data.locations || [];
+}
+
 // --- AI assistant ---------------------------------------------------------
 export async function riAssistantAsk(query, ctx = {}) {
   const { data } = await slow.post('/route-intel/assistant/ask', { query, ...ctx });

@@ -766,6 +766,42 @@ export async function observeDeviceAlerts(): Promise<DeviceAlerts> {
 export async function observeGetAlertLabels(): Promise<{ labels: Record<string, string> }> {
   const { data } = await aiApi.get('/observe/alert-labels'); return data;
 }
+
+// =========================================================================
+// Settings — every .env tunable, editable from the UI, plus DB bootstrap.
+// =========================================================================
+
+export interface ConfigKey {
+  key: string; label: string; description: string;
+  secret: boolean; restart: boolean; kind: 'text' | 'number' | 'bool';
+  value: string;
+}
+export interface ConfigSection { section: string; hint: string; keys: ConfigKey[]; }
+export interface AppConfig { env_file: string; env_file_exists: boolean; sections: ConfigSection[]; }
+
+export interface DbTableStatus { name: string; rows: number | null; }
+export interface DbStatus {
+  configured: boolean; url_masked: string; reachable: boolean;
+  dialect: string | null; database: string | null;
+  tables: DbTableStatus[]; error: string | null;
+}
+export interface DbInitResult {
+  ok: boolean; url_configured: boolean;
+  steps: Record<string, { ok: boolean; error?: string }>;
+}
+
+export async function fetchAppConfig(): Promise<AppConfig> {
+  const { data } = await api.get('/settings/config'); return data;
+}
+export async function saveAppConfig(updates: Record<string, string>): Promise<{ ok: boolean; saved: string[]; needs_restart: string[] }> {
+  const { data } = await api.put('/settings/config', { updates }); return data;
+}
+export async function fetchDbStatus(): Promise<DbStatus> {
+  const { data } = await slowApi.get('/settings/db/status'); return data;
+}
+export async function initDb(): Promise<DbInitResult> {
+  const { data } = await slowApi.post('/settings/db/init', {}, { timeout: 120000 }); return data;
+}
 export async function observePutAlertLabels(patch: Record<string, string>): Promise<{ labels: Record<string, string> }> {
   const { data } = await aiApi.put('/observe/alert-labels', patch); return data;
 }

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Eye, Truck, Activity, Route, Clock, Gauge, Sparkles,
+  Eye, Truck, Activity, Route, Clock, Gauge,
   AlertTriangle, RefreshCw, Loader2, ArrowRight, Zap, CircleDot,
-  Pause, Timer, Map as MapIcon, Search,
+  Timer, Map as MapIcon, Search,
 } from 'lucide-react';
 import {
   observeSnapshot, type ObserveSnapshot, type ObserveVehicle,
