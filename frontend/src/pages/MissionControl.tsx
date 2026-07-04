@@ -94,7 +94,7 @@ export default function MissionControl() {
               className="text-3xl font-bold mb-2"
               style={{ fontFamily: 'var(--font-display)', color: 'var(--fg-1)' }}
             >
-              {summary.greeting}
+              <Emphasis text={summary.greeting} />
             </h1>
             <div className="flex items-center gap-3 mb-4">
               <RiskPill risk={summary.operational_risk} />
@@ -244,12 +244,7 @@ export default function MissionControl() {
                 </button>
               </div>
 
-              {!explain ? <CardSkeleton inDrawer /> : (
-                <pre
-                  className="text-xs p-3 rounded-lg overflow-auto"
-                  style={{ background: 'var(--bg-2)', color: 'var(--fg-2)', fontFamily: 'var(--font-mono)' }}
-                >{JSON.stringify(explain, null, 2)}</pre>
-              )}
+              {!explain ? <CardSkeleton inDrawer /> : <ExplainView explain={explain} />}
             </motion.aside>
           </motion.div>
         )}
@@ -261,6 +256,21 @@ export default function MissionControl() {
 // ----------------------------------------------------------------------------
 // sub-components
 // ----------------------------------------------------------------------------
+
+/** Render the tiny `**bold**` markdown the composer uses in its headline as
+ *  real emphasis instead of literal asterisks. */
+function Emphasis({ text }: { text: string }) {
+  const parts = (text ?? '').split(/\*\*(.+?)\*\*/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 === 1
+          ? <span key={i} style={{ color: 'var(--accent)' }}>{p}</span>
+          : <span key={i}>{p}</span>,
+      )}
+    </>
+  );
+}
 
 function RiskPill({ risk }: { risk: MissionControlSummary['operational_risk'] }) {
   const Icon = risk === 'HIGH' ? AlertTriangle : risk === 'LOW' ? ShieldCheck : Activity;
@@ -292,8 +302,15 @@ function Card({ card, delay, onClick }: { card: AiCard; delay: number; onClick: 
       }}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] uppercase tracking-[0.15em]" style={{ color: 'var(--fg-3)' }}>
+        <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.15em]" style={{ color: 'var(--fg-3)' }}>
           {card.title}
+          {card.live === false && (
+            <span
+              className="text-[9px] normal-case tracking-normal px-1.5 py-0.5 rounded-full font-semibold"
+              style={{ background: 'var(--bg-2)', color: 'var(--warning)' }}
+              title="Model offline — placeholder value, not a live reading"
+            >demo</span>
+          )}
         </span>
         <Icon className="w-3.5 h-3.5" style={{ color: trendColor[card.trend] }} />
       </div>
@@ -340,6 +357,106 @@ function Signal({
       <div className="text-xl font-bold mono" style={{ color }}>
         {value ?? '—'}{value != null && suffix ? suffix : ''}
       </div>
+    </div>
+  );
+}
+
+/** Human-readable rendering of an /ai/explain payload — narrative first,
+ *  then weighted contributors, then supporting evidence. No raw JSON. */
+function ExplainView({ explain }: { explain: any }) {
+  if (explain?.error) {
+    return (
+      <div className="text-xs rounded-lg p-3" style={{ background: 'var(--bg-2)', color: 'var(--danger)' }}>
+        Could not load the explanation: {String(explain.error)}
+      </div>
+    );
+  }
+  const contributors: any[] = Array.isArray(explain?.contributors) ? explain.contributors : [];
+  const anomalies: any[] = Array.isArray(explain?.top_anomalies) ? explain.top_anomalies : [];
+  const riskDrivers: any[] = Array.isArray(explain?.top_risk_drivers) ? explain.top_risk_drivers : [];
+
+  return (
+    <div className="space-y-5">
+      {explain?.narrative && (
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--fg-2)' }}>{explain.narrative}</p>
+      )}
+
+      {contributors.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: 'var(--fg-3)' }}>
+            Contributing signals
+          </div>
+          <div className="space-y-2">
+            {contributors.map((c, i) => (
+              <div key={i} className="rounded-lg p-3" style={{ background: 'var(--bg-2)' }}>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span style={{ color: 'var(--fg-1)' }}>{c.name}</span>
+                  <span className="mono" style={{ color: 'var(--fg-2)' }}>{String(c.value ?? '—')}</span>
+                </div>
+                <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-3)' }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${Math.round((c.weight ?? 0) * 100)}%`, background: 'var(--accent)' }}
+                  />
+                </div>
+                <div className="text-[10px] mt-1" style={{ color: 'var(--fg-3)' }}>
+                  weight {Math.round((c.weight ?? 0) * 100)}%
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {anomalies.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: 'var(--fg-3)' }}>
+            Top anomalies
+          </div>
+          <div className="space-y-1.5">
+            {anomalies.map((a, i) => (
+              <div key={i} className="flex items-start justify-between gap-2 text-xs p-2 rounded-lg"
+                style={{ background: 'var(--bg-2)' }}>
+                <div>
+                  <span className="mono" style={{ color: 'var(--fg-1)' }}>trip {a.trip_id}</span>
+                  <div className="text-[11px]" style={{ color: 'var(--fg-2)' }}>{a.reason}</div>
+                </div>
+                {a.score != null && (
+                  <span className="mono text-[11px] shrink-0" style={{ color: 'var(--warning)' }}>
+                    {Number(a.score).toFixed(2)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {riskDrivers.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: 'var(--fg-3)' }}>
+            Highest-risk drivers
+          </div>
+          <div className="space-y-1.5">
+            {riskDrivers.map((d, i) => (
+              <div key={i} className="flex items-center justify-between text-xs p-2 rounded-lg"
+                style={{ background: 'var(--bg-2)' }}>
+                <span style={{ color: 'var(--fg-1)' }}>{d.driver_name ?? `Driver ${d.driver_id}`}</span>
+                <span className="mono" style={{ color: 'var(--danger)' }}>
+                  {d.composite_score != null ? Number(d.composite_score).toFixed(2) : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!explain?.narrative && contributors.length === 0 && anomalies.length === 0 && riskDrivers.length === 0 && (
+        <div className="text-xs" style={{ color: 'var(--fg-3)' }}>
+          No detailed evidence available for this card right now — the supporting
+          model may be offline.
+        </div>
+      )}
     </div>
   );
 }
@@ -410,9 +527,17 @@ const TYPE_LABEL: Record<string, string> = {
   comparison_verdict: 'Comparison',
 };
 
+function modelBadge(model: string | null): string {
+  const m = (model || '').toLowerCase();
+  if (m.startsWith('gemini'))    return 'Gemini AI';
+  if (m.startsWith('llama-cpp')) return 'Local LLM';
+  return model || 'AI';
+}
+
 function InsightsFeed() {
   const [rows, setRows]       = useState<FeedRow[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [openRow, setOpenRow] = useState<FeedRow | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -433,7 +558,7 @@ function InsightsFeed() {
         <div className="flex items-center gap-2" style={{ color: 'var(--fg-3)' }}>
           <Wand2 className="w-4 h-4" style={{ color: 'var(--accent)' }} />
           <span className="text-[10px] uppercase tracking-[0.18em] font-semibold">
-            Latest AI insights · generated on demand
+            Latest AI insights
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -465,15 +590,14 @@ function InsightsFeed() {
       ) : (
         <div className="grid md:grid-cols-2 gap-3">
           {rows.map((r) => {
-            const isLlm = (r.model || '').startsWith('gemini') && !(r.model || '').includes('rule-fallback');
             const tripLabel = r.from_waypoint || r.to_waypoint
               ? `${r.from_waypoint ?? '—'} → ${r.to_waypoint ?? '—'}`
               : r.vehicle_id ?? '';
             return (
-              <Link
+              <button
                 key={r.id}
-                to={r.trip_id ? `/route-intel/trips/${r.trip_id}` : '/route-intel/insights'}
-                className="rounded-xl p-4 border block transition-all hover:border-[var(--accent)]"
+                onClick={() => setOpenRow(r)}
+                className="text-left rounded-xl p-4 border block w-full transition-all hover:border-[var(--accent)]"
                 style={{ background: 'var(--bg-2)', borderColor: 'var(--border)' }}
               >
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -488,11 +612,11 @@ function InsightsFeed() {
                   )}
                   <span
                     className="ml-auto flex items-center gap-1 text-[10px] font-semibold"
-                    style={{ color: isLlm ? 'var(--success)' : 'var(--fg-4)' }}
+                    style={{ color: 'var(--success)' }}
                     title={r.model}
                   >
                     <Sparkles className="w-3 h-3" />
-                    {isLlm ? 'Gemini AI' : 'template'}
+                    {modelBadge(r.model)}
                   </span>
                 </div>
                 <p
@@ -505,14 +629,120 @@ function InsightsFeed() {
                 >
                   {r.text}
                 </p>
-                <div className="text-[10px] mono mt-2" style={{ color: 'var(--fg-4)' }}>
-                  {new Date(r.created_at).toLocaleString()}
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-[10px] mono" style={{ color: 'var(--fg-4)' }}>
+                    {new Date(r.created_at).toLocaleString()}
+                  </span>
+                  <span className="flex items-center gap-1 text-[11px] font-semibold" style={{ color: 'var(--accent)' }}>
+                    Details <ChevronRight className="w-3 h-3" />
+                  </span>
                 </div>
-              </Link>
+              </button>
             );
           })}
         </div>
       )}
+
+      <InsightModal row={openRow} onClose={() => setOpenRow(null)} />
     </section>
+  );
+}
+
+/** Full-detail card shown when an insight is clicked — the complete paragraph
+ *  plus its context (route, vehicle, model, timestamp) and a jump to the trip. */
+function InsightModal({ row, onClose }: { row: FeedRow | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!row) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [row, onClose]);
+
+  return (
+    <AnimatePresence>
+      {row && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.55)' }}
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.98 }}
+            transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+            className="w-full max-w-xl rounded-2xl border overflow-hidden"
+            style={{ background: 'var(--bg-4)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-card)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* header */}
+            <div className="px-6 pt-5 pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
+                      style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                    >
+                      {TYPE_LABEL[row.insight_type] ?? row.insight_type}
+                    </span>
+                    <span
+                      className="flex items-center gap-1 text-[10px] font-semibold"
+                      style={{ color: 'var(--success)' }}
+                      title={row.model}
+                    >
+                      <Sparkles className="w-3 h-3" /> {modelBadge(row.model)}
+                    </span>
+                  </div>
+                  <h3
+                    className="text-lg font-bold leading-tight"
+                    style={{ color: 'var(--fg-1)', fontFamily: 'var(--font-display)' }}
+                  >
+                    {row.from_waypoint || row.to_waypoint
+                      ? `${row.from_waypoint ?? '—'} → ${row.to_waypoint ?? '—'}`
+                      : (TYPE_LABEL[row.insight_type] ?? 'AI insight')}
+                  </h3>
+                </div>
+                <button
+                  onClick={onClose}
+                  className="p-1.5 rounded-md hover:bg-[var(--bg-2)] shrink-0"
+                  style={{ color: 'var(--fg-2)' }}
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* body */}
+            <div className="px-6 py-5 max-h-[50vh] overflow-y-auto">
+              <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--fg-1)' }}>
+                {row.text}
+              </p>
+            </div>
+
+            {/* meta + actions */}
+            <div className="px-6 py-4 border-t flex items-center justify-between gap-3 flex-wrap"
+              style={{ borderColor: 'var(--border)', background: 'var(--bg-3)' }}>
+              <div className="text-[11px] mono space-x-3" style={{ color: 'var(--fg-3)' }}>
+                {row.vehicle_id && <span>{row.vehicle_id}</span>}
+                <span>{new Date(row.created_at).toLocaleString()}</span>
+                <span title="generation model">{row.model}</span>
+              </div>
+              {row.trip_id && (
+                <Link
+                  to={`/route-intel/trips/${row.trip_id}`}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold"
+                  style={{ background: 'var(--accent)', color: '#000' }}
+                >
+                  Open trip <ChevronRight className="w-3 h-3" />
+                </Link>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

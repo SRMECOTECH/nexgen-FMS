@@ -166,3 +166,6 @@ htmlcov/
 *.tfstate*
 # runtime caches
 data/cache/
+
+# Claude Code local tool config (launch.json etc.)
+.claude/

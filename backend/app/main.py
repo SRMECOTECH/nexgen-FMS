@@ -173,6 +173,11 @@ def _describe_data_source() -> dict:
     else:
         engine = "WAREHOUSE"
 
+    # host:port only — never leak credentials into a health payload
+    host = ""
+    if "@" in warehouse_url:
+        host = warehouse_url.split("@", 1)[1].split("/", 1)[0]
+
     ingest = os.getenv("INGEST_SOURCE", "sample").lower()
     iceberg_live = ingest == "iceberg" and not settings.disable_iceberg
     ingest_label = "ICEBERG" if iceberg_live else "EXCEL"
@@ -181,6 +186,7 @@ def _describe_data_source() -> dict:
         "mode": f"{ingest_label}→{engine}",
         "ingest": ingest_label,
         "warehouse": engine,
+        "warehouse_host": host,
         "iceberg_disabled": settings.disable_iceberg,
     }
 
@@ -191,6 +197,7 @@ def health():
     return {
         "status": "ok",
         "service": "nextgen-fms-api",
+        "version": "0.2.0",
         "data_source": src["mode"],
         **src,
     }

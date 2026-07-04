@@ -211,6 +211,9 @@ def analyze_trip(trip_id: int, params: Dict[str, Any] | None = None,
 
 
 def _generate_all_ai(run_id, trip, costs, opps, eff, zones, traffic, bt):
+    """Generate + persist the per-run insight paragraphs. Only text a REAL
+    LLM wrote is stored — rule-based templates and rule-fallback output are
+    discarded so ri_ai_insights holds genuine AI insights only."""
     insights = [
         ai.trip_summary(trip, costs, eff, traffic, zones),
         ai.cost_advice(costs, opps),
@@ -218,13 +221,21 @@ def _generate_all_ai(run_id, trip, costs, opps, eff, zones, traffic, bt):
         ai.traffic_callout(traffic),
         ai.recommendations_list(opps),
     ]
+    written = 0
     for ins in insights:
+        if not ai.is_llm_label(ins.get("model")):
+            continue
         db.insert_ai_insight(
             run_id=run_id,
             insight_type=ins["insight_type"],
             text_body=ins["text"],
             model=ins["model"],
         )
+        written += 1
+    if written < len(insights):
+        logger.info("pipeline: run=%s persisted %d/%d insights (LLM-only policy; backend=%s)",
+                    run_id, written, len(insights), ai.backend_name())
+    return written
 
 
 def _read_bundle(trip_id: int, run_id: int) -> Dict[str, Any]:
@@ -290,12 +301,14 @@ def compare_trips(trip_ids: List[int], params: Dict[str, Any] | None = None) -> 
 
     cmp_id = db.insert_comparison(trip_ids, table, best_trip_id)
 
-    # AI verdict
+    # AI verdict — persisted only when a real LLM wrote it (same policy as
+    # the per-run insights; template verdicts stay out of ri_ai_insights).
     verdict = ai.comparison_verdict(table)
-    db.insert_ai_insight(comparison_id=cmp_id,
-                         insight_type=verdict["insight_type"],
-                         text_body=verdict["text"],
-                         model=verdict["model"])
+    if ai.is_llm_label(verdict.get("model")):
+        db.insert_ai_insight(comparison_id=cmp_id,
+                             insight_type=verdict["insight_type"],
+                             text_body=verdict["text"],
+                             model=verdict["model"])
 
     return db.get_comparison(cmp_id)
 

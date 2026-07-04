@@ -146,6 +146,68 @@ def aggregate_to_time_windows(df, time_window='30min'):
 
     return aggregated
 
+# ---------------------------------------------------------------------------
+# LLM insights feed — the same rows the React app shows on Mission Control,
+# read straight from the warehouse (ri_ai_insights, LLM-written only).
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
+def load_llm_insights(limit: int = 12):
+    """Latest genuinely-LLM insights + trip context. [] when the warehouse is
+    unreachable — the feed then simply doesn't render."""
+    try:
+        from sqlalchemy import text as _sqltext
+        from route_intelligence import db as _ridb
+        with _ridb.get_engine().connect() as _c:
+            rows = _c.execute(_sqltext("""
+                SELECT ai.insight_type, ai.text, ai.model, ai.created_at,
+                       t.vehicle_id, t.from_waypoint, t.to_waypoint
+                FROM ri_ai_insights ai
+                LEFT JOIN ri_analysis_runs r ON r.id = ai.run_id
+                LEFT JOIN ri_trips t ON t.id = r.trip_id
+                WHERE ai.model NOT LIKE 'rule-based%'
+                  AND ai.model NOT LIKE '%rule-fallback%'
+                ORDER BY ai.created_at DESC
+                LIMIT :lim
+            """), {"lim": int(limit)}).mappings().all()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+_INSIGHT_TYPE_LABELS = {
+    "trip_summary": "Trip summary", "cost_advice": "Cost advice",
+    "route_quality": "Route quality", "traffic_callout": "Traffic",
+    "recommendations_list": "Recommendations", "comparison_verdict": "Comparison",
+}
+
+
+def render_llm_insights_feed(limit: int = 12, columns: int = 2):
+    """Card grid of the latest LLM insights; shared by the landing view and
+    the AI Insights tab."""
+    rows = load_llm_insights(limit)
+    if not rows:
+        st.caption("No LLM insights in the warehouse yet — analyse a trip in the "
+                   "main app (or click *Regenerate AI* on a trip) and they will "
+                   "appear here.")
+        return
+    cols = st.columns(columns)
+    for i, r in enumerate(rows):
+        with cols[i % columns]:
+            with st.container(border=True):
+                label = _INSIGHT_TYPE_LABELS.get(r["insight_type"], r["insight_type"])
+                route = ""
+                if r.get("from_waypoint") or r.get("to_waypoint"):
+                    route = f"{r.get('from_waypoint') or '—'} → {r.get('to_waypoint') or '—'}"
+                st.markdown(f"**:blue[{label}]** &nbsp; {route}")
+                st.write(r["text"])
+                meta = " · ".join(x for x in [
+                    str(r.get("vehicle_id") or ""),
+                    str(r.get("model") or ""),
+                    r["created_at"].strftime("%d %b %Y %H:%M") if r.get("created_at") else "",
+                ] if x)
+                st.caption(meta)
+
+
 # Header
 st.markdown('<p class="main-header">🗺️ Detailed Analysis of GPS Data</p>', unsafe_allow_html=True)
 st.markdown(
@@ -247,7 +309,16 @@ with st.sidebar:
 if (uploaded_files is None or len(uploaded_files) == 0) and not use_sample:
     st.info("👆 **Upload one or more Excel files with GPS data to begin analysis**")
 
-    with st.expander("📊 Understanding Speed Metrics", expanded=True):
+    # Even without an upload, surface what the AI already knows — the same
+    # LLM insight feed the React app shows on Mission Control.
+    st.subheader("🧠 Latest AI Insights from the fleet")
+    left, right = st.columns([5, 1])
+    with right:
+        if st.button("🔄 Refresh", key="refresh_insights_landing"):
+            load_llm_insights.clear()
+    render_llm_insights_feed(limit=12, columns=2)
+
+    with st.expander("📊 Understanding Speed Metrics", expanded=False):
         st.markdown("""
         ### How This App Calculates Speed
         
@@ -907,13 +978,27 @@ try:
                 st.dataframe(st.session_state.geocoded_data, use_container_width=True)
 
     with tab6:
-        st.subheader("🤖 AI-Powered Journey Insights")
+        st.subheader("🤖 AI Insights")
 
+        # 1) The warehouse feed — LLM paragraphs written by the route-intel
+        #    pipeline (same rows as the React app's Mission Control feed).
+        feed_l, feed_r = st.columns([5, 1])
+        with feed_l:
+            st.markdown("##### 🧠 Fleet insight feed (Gemini via route-intel)")
+        with feed_r:
+            if st.button("🔄 Refresh", key="refresh_insights_tab"):
+                load_llm_insights.clear()
+        render_llm_insights_feed(limit=10, columns=2)
+
+        st.markdown("---")
+
+        # 2) Optional on-the-spot journey planner (needs OPENAI_API_KEY).
+        st.markdown("##### 🚀 Journey planner for THIS upload")
         planner = services['journey_planner']
 
         if not planner.enabled:
-            st.error("❌ OpenAI API key not configured. Set OPENAI_API_KEY in your .env file")
-            st.info("💡 Get your API key from https://platform.openai.com/api-keys")
+            st.caption("Journey planner is optional and needs `OPENAI_API_KEY` in `.env` — "
+                       "the fleet insight feed above works without it.")
         else:
             if st.button("🚀 Generate AI Analysis & Recommendations", type="primary"):
                 with st.spinner("AI analyzing your journey data..."):

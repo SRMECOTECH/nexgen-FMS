@@ -96,13 +96,20 @@ class CloudLLMBackend(_Backend):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         self.model = model
-        self.llm = ChatGoogleGenerativeAI(
+        kwargs: Dict[str, Any] = dict(
             model=model,
             google_api_key=api_key,
             temperature=temperature,
-            max_output_tokens=512,
+            # 2.5-class models silently burn output budget on hidden "thinking"
+            # tokens and then truncate the visible answer mid-sentence. A large
+            # cap + thinking_budget=0 keeps the whole paragraph.
+            max_output_tokens=1024,
             timeout=int(os.environ.get("INSIGHTS_TIMEOUT", "20")),
         )
+        try:
+            self.llm = ChatGoogleGenerativeAI(thinking_budget=0, **kwargs)
+        except TypeError:  # older langchain-google-genai without thinking_budget
+            self.llm = ChatGoogleGenerativeAI(**kwargs)
         self.name = f"gemini:{model}"
         logger.info("ai_insights: cloud LLM backend ready (%s)", self.name)
 
@@ -189,6 +196,17 @@ def reset_backend() -> None:
 
 def backend_name() -> str:
     return get_backend().name
+
+
+def is_llm_label(model: Optional[str]) -> bool:
+    """True when a model label names text a REAL LLM wrote — used by the
+    pipeline to decide whether an insight is worth persisting, and by the
+    feeds to hide template output. 'rule-based-v1' and any '…→rule-fallback'
+    label mean the deterministic templates produced the text."""
+    m = (model or "").strip().lower()
+    if not m or m.startswith("rule-based") or "rule-fallback" in m:
+        return False
+    return m.startswith("gemini") or m.startswith("llama-cpp")
 
 
 # ============================================================================

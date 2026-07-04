@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   Activity, Wand2, FileSpreadsheet, Microscope, ExternalLink,
   Compass, Eye, Brain, TrendingUp, Lightbulb, Zap, GraduationCap, Settings,
-  ScrollText,
+  ScrollText, Database,
 } from 'lucide-react';
 import { fetchHealth, type HealthStatus } from '../../lib/api';
 
@@ -16,7 +16,7 @@ interface NavItem {
 
 interface NavSection {
   title: string;
-  /** One-line subtitle shown under the section header. */
+  /** Shown as a tooltip on the section header — not inline, to keep the rail clean. */
   hint?: string;
   items: NavItem[];
 }
@@ -24,36 +24,33 @@ interface NavSection {
 // ============================================================================
 // AI Operating System IA — organised by *intelligence stage*, not DB tables.
 // The shape (Observe → Understand → Predict → Recommend → Act → Learn) is the
-// loop the platform thinks in. Each section names a verb, not an object.
-// Route Intelligence keeps its current pages and lives under "Understand".
+// loop the platform thinks in. Section hints live in tooltips so the rail
+// stays scannable; labels are short nouns, not sentences.
 // ============================================================================
 const sections: NavSection[] = [
   {
     title: 'Mission Control',
     hint: 'What deserves your attention right now',
     items: [
-      { to: '/mission-control', label: 'Today',             icon: Compass },
-      { to: '/live-thinking',   label: 'Live AI Thinking',  icon: Zap },
+      { to: '/mission-control', label: 'Today',            icon: Compass },
+      { to: '/live-thinking',   label: 'Live AI Thinking', icon: Zap },
     ],
   },
   {
     title: 'Observe',
     hint: 'Raw signal from the fleet',
     items: [
-      { to: '/observe', label: 'Real-time telemetry', icon: Eye },
+      { to: '/observe', label: 'Live Telemetry', icon: Eye },
     ],
   },
   {
     title: 'Understand',
     hint: 'AI-derived structure & insight',
     items: [
-      // Route Intelligence stays alive — the AI-OS shell wraps it instead of
-      // replacing it. Sub-routes (uploads / trips / segments / compare) are
-      // reachable from the page itself.
-      { to: '/route-intel',           label: 'Route Intelligence',              icon: FileSpreadsheet },
-      { to: '/route-intel/insights',  label: 'Route Insights Feed',             icon: Wand2 },
-      { to: '/understand',            label: 'Understand (overview)',           icon: Brain },
-      { to: 'http://127.0.0.1:8501',  label: 'Detailed GPS Analysis',           icon: Microscope, external: true },
+      { to: '/route-intel',           label: 'Route Intelligence',   icon: FileSpreadsheet },
+      { to: '/route-intel/insights',  label: 'AI Insights Feed',     icon: Wand2 },
+      { to: '/understand',            label: 'Fleet Overview',       icon: Brain },
+      { to: 'http://127.0.0.1:8501',  label: 'Detailed GPS Analysis', icon: Microscope, external: true },
     ],
   },
   {
@@ -65,23 +62,23 @@ const sections: NavSection[] = [
   },
   {
     title: 'Recommend',
-    hint: "What you should do about it",
+    hint: 'What you should do about it',
     items: [
-      { to: '/recommend', label: 'Driver · Route · Hub', icon: Lightbulb },
+      { to: '/recommend', label: 'Recommendations', icon: Lightbulb },
     ],
   },
   {
     title: 'Act',
     hint: 'Approve, dispatch, alert',
     items: [
-      { to: '/act', label: 'Actions & approvals', icon: Zap },
+      { to: '/act', label: 'Actions & Approvals', icon: Zap },
     ],
   },
   {
     title: 'Learn',
     hint: 'Model registry & feedback loop',
     items: [
-      { to: '/learn', label: 'Model registry', icon: GraduationCap },
+      { to: '/learn', label: 'Model Registry', icon: GraduationCap },
     ],
   },
   {
@@ -94,24 +91,44 @@ const sections: NavSection[] = [
   },
 ];
 
+/** "EXCEL→MYSQL" → "Excel → MySQL" — machine label to human label. */
+function friendlySource(mode: string | undefined): string {
+  if (!mode) return '';
+  const pretty: Record<string, string> = {
+    EXCEL: 'Excel', ICEBERG: 'Iceberg', MYSQL: 'MySQL',
+    POSTGRES: 'Postgres', WAREHOUSE: 'Warehouse', MOCK: 'Mock data',
+  };
+  return mode
+    .split('→')
+    .map((p) => pretty[p.trim()] ?? p.trim())
+    .join(' → ');
+}
+
 export default function Sidebar() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+
   useEffect(() => {
     let on = true;
-    fetchHealth().then((h) => on && setHealth(h)).catch(() => {});
-    const t = setInterval(() => fetchHealth().then((h) => on && setHealth(h)).catch(() => {}), 30_000);
+    const poll = () =>
+      fetchHealth()
+        .then((h) => { if (on) { setHealth(h); setFailed(false); } })
+        .catch(() => { if (on) setFailed(true); });
+    poll();
+    const t = setInterval(poll, 30_000);
     return () => { on = false; clearInterval(t); };
   }, []);
 
-  const live = !!health && health.status === 'ok';
-  const source = health?.data_source ?? '—';
-  const host = (health?.lakehouse_url ?? '').replace(/^https?:\/\//, '') || 'connecting…';
+  const live = !!health && health.status === 'ok' && !failed;
+  const statusLabel = live ? 'All systems online' : failed ? 'API offline' : 'Checking status…';
+  const statusColor = live ? 'var(--success)' : failed ? 'var(--danger)' : 'var(--warning)';
 
   return (
     <aside
       className="w-64 flex flex-col border-r overflow-y-auto"
       style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}
     >
+      {/* ===== Brand ===== */}
       <div
         className="px-5 py-5 flex items-center gap-3 border-b sticky top-0 z-10"
         style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}
@@ -132,20 +149,17 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 px-3 py-4 space-y-5">
+      {/* ===== Navigation ===== */}
+      <nav className="flex-1 px-3 py-4 space-y-6">
         {sections.map(({ title, hint, items }) => (
           <div key={title}>
             <div
-              className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-[0.18em]"
+              className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] cursor-default"
               style={{ color: 'var(--fg-3)' }}
+              title={hint}
             >
               {title}
             </div>
-            {hint && (
-              <div className="px-3 mb-2 text-[10px]" style={{ color: 'var(--fg-3)', opacity: 0.7 }}>
-                {hint}
-              </div>
-            )}
             <div className="space-y-0.5">
               {items.map(({ to, label, icon: Icon, external }) => external ? (
                 <a
@@ -158,6 +172,7 @@ export default function Sidebar() {
                     color: 'var(--fg-2)',
                     borderLeft: '3px solid transparent',
                   }}
+                  title="Opens the Streamlit deep-dive in a new tab"
                 >
                   <Icon className="w-4 h-4 shrink-0" />
                   <span className="flex-1">{label}</span>
@@ -167,7 +182,7 @@ export default function Sidebar() {
                 <NavLink
                   key={to}
                   to={to}
-                  end={to === '/'}
+                  end={to === '/' || to === '/route-intel'}
                   className={({ isActive }) =>
                     `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all ${
                       isActive ? 'font-semibold' : 'font-medium hover:bg-[var(--bg-2)]'
@@ -188,15 +203,33 @@ export default function Sidebar() {
         ))}
       </nav>
 
+      {/* ===== Status footer ===== */}
       <div
-        className="px-5 py-4 border-t text-xs sticky bottom-0"
-        style={{ background: 'var(--bg-1)', borderColor: 'var(--border)', color: 'var(--fg-3)' }}
+        className="px-5 py-3.5 border-t sticky bottom-0 space-y-1.5"
+        style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}
       >
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full" style={{ background: live ? 'var(--success)' : 'var(--danger)' }} />
-          <span className="mono text-[10px]">v0.2.0 · {source}</span>
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-2 text-[11px] font-medium" style={{ color: 'var(--fg-2)' }}>
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ background: statusColor, boxShadow: live ? `0 0 6px ${statusColor}` : 'none' }}
+            />
+            {statusLabel}
+          </span>
+          <span className="mono text-[10px]" style={{ color: 'var(--fg-4)' }}>
+            v{health?.version ?? '0.2.0'}
+          </span>
         </div>
-        <div className="mt-1 text-[10px] mono truncate" title={host}>{host}</div>
+        {live && health?.data_source && (
+          <div
+            className="flex items-center gap-1.5 text-[10px]"
+            style={{ color: 'var(--fg-3)' }}
+            title={health.warehouse_host ? `Warehouse: ${health.warehouse_host}` : undefined}
+          >
+            <Database className="w-3 h-3 shrink-0" />
+            <span className="truncate">{friendlySource(health.data_source)}</span>
+          </div>
+        )}
       </div>
     </aside>
   );

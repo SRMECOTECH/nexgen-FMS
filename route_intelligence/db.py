@@ -709,9 +709,14 @@ def fetch_full_analysis(run_id: int) -> Dict:
                        {"r": run_id}).mappings().all()
         tw = c.execute(text("SELECT * FROM ri_time_windows WHERE run_id=:r ORDER BY window_start"),
                        {"r": run_id}).mappings().all()
+        # LLM-only policy: template / rule-fallback rows (legacy data) never
+        # surface as "AI insights" in the bundle.
         ai = c.execute(text("""
             SELECT insight_type, text, model, created_at FROM ri_ai_insights
-            WHERE run_id=:r ORDER BY created_at
+            WHERE run_id=:r
+              AND model NOT LIKE 'rule-based%'
+              AND model NOT LIKE '%rule-fallback%'
+            ORDER BY created_at
         """), {"r": run_id}).mappings().all()
     return {
         "route_metrics": {

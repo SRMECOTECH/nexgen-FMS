@@ -5,7 +5,6 @@ Uses LangChain and OpenAI to provide intelligent journey recommendations
 
 import os
 from typing import Dict, List
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
@@ -14,20 +13,26 @@ load_dotenv()
 
 
 class JourneyPlannerAgent:
-    """AI agent for journey planning and route optimization"""
+    """AI agent for journey planning and route optimization.
+
+    ``langchain_openai`` is an OPTIONAL extra — imported lazily so the whole
+    Streamlit app doesn't crash at import time when it isn't installed."""
 
     def __init__(self):
         api_key = os.getenv("OPENAI_API_KEY")
-
+        self.enabled = False
         if api_key:
-            self.llm = ChatOpenAI(
-                temperature=0.3,
-                openai_api_key=api_key,
-                model_name="gpt-4o-mini"
-            )
-            self.enabled = True
-        else:
-            self.enabled = False
+            try:
+                from langchain_openai import ChatOpenAI
+                self.llm = ChatOpenAI(
+                    temperature=0.3,
+                    openai_api_key=api_key,
+                    model_name="gpt-4o-mini"
+                )
+                self.enabled = True
+            except ImportError:
+                # key present but extra not installed — planner stays disabled
+                self.enabled = False
 
     def plan_journey(
             self,

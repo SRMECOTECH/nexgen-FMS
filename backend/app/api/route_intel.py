@@ -351,19 +351,22 @@ def assistant_suggestions() -> Dict[str, Any]:
 
 @router.get("/trips/{trip_id}/landmarks")
 def trip_landmarks(trip_id: int,
-                   samples: int = 5,
+                   samples: int = 8,
                    radius_m: Optional[int] = None,
-                   categories: Optional[str] = None) -> Dict[str, Any]:
-    """POIs near the trip's polyline. ``categories`` is a comma-separated list
+                   categories: Optional[str] = None,
+                   refresh: bool = False) -> Dict[str, Any]:
+    """POIs near the trip's polyline — ONE Overpass request for the whole
+    corridor, MySQL-cached 30 days. ``categories`` is a comma-separated list
     of category keys (fuel_stations, restaurants, hotels, parking, rest_areas,
-    hospitals, police, workshops). Defaults come from config/route_intel.yaml."""
+    hospitals, police, workshops). Overpass trouble comes back as
+    ``{"landmarks": [], "error": "..."}`` (HTTP 200) so the UI can retry."""
     if not db.get_trip(trip_id):
         raise HTTPException(404, "trip not found")
     cats = [c.strip() for c in categories.split(",")] if categories else None
     try:
         return landmarks_svc.landmarks_for_trip(
-            trip_id, n_samples=max(1, min(samples, 12)),
-            radius_m=radius_m, categories=cats,
+            trip_id, n_samples=max(2, min(samples, 12)),
+            radius_m=radius_m, categories=cats, force_refresh=refresh,
         )
     except Exception as exc:
         logger.exception("landmarks failed for trip=%s", trip_id)
@@ -423,7 +426,9 @@ def regenerate_ai(trip_id: int) -> Dict[str, Any]:
     run = db.get_latest_done_run_for_trip(trip_id)
     if not run:
         raise HTTPException(400, "run analyze first")
-    # Re-roll insights using cached metric tables
+    # Re-roll insights using cached metric tables. LLM-only policy: template /
+    # rule-fallback output is discarded, and the response says how many rows
+    # were actually written so the UI can tell the user when the LLM is down.
     bundle = db.fetch_full_analysis(run["id"])
     trip = db.get_trip(trip_id)
     costs = bundle["cost_metrics"]["breakdown"]
@@ -432,6 +437,7 @@ def regenerate_ai(trip_id: int) -> Dict[str, Any]:
     zones = bundle["route_metrics"]["speed_zones"]
     traffic = bundle["route_metrics"]["traffic"]
     bt = bundle["route_metrics"]["backtracking"] or []
+    written = 0
     for ins in [
         ai.trip_summary(trip, costs, eff, traffic, zones),
         ai.cost_advice(costs, opps),
@@ -439,9 +445,16 @@ def regenerate_ai(trip_id: int) -> Dict[str, Any]:
         ai.traffic_callout(traffic),
         ai.recommendations_list(opps),
     ]:
+        if not ai.is_llm_label(ins.get("model")):
+            continue
         db.insert_ai_insight(run_id=run["id"], insight_type=ins["insight_type"],
                              text_body=ins["text"], model=ins["model"])
-    return {"ok": True, "run_id": run["id"], "model": ai.backend_name()}
+        written += 1
+    return {"ok": written > 0, "run_id": run["id"], "model": ai.backend_name(),
+            "written": written,
+            "detail": None if written else (
+                "LLM unavailable — no insights were generated. Check the Gemini "
+                "key / provider on the Settings page.")}
 
 
 # ---------------------------------------------------------------------------
@@ -480,10 +493,14 @@ def get_comparison(cmp_id: int) -> Dict[str, Any]:
 @router.get("/insights")
 def list_insights(limit: int = 50, insight_type: Optional[str] = None,
                   date_from: Optional[str] = None, date_to: Optional[str] = None,
-                  dedupe: bool = False) -> Dict[str, Any]:
+                  dedupe: bool = False, llm_only: bool = True) -> Dict[str, Any]:
     """Latest AI paragraphs across the fleet — feeds the 'Insights' page.
     Optional ISO ``date_from`` / ``date_to`` (yyyy-mm-dd) scope the feed by
     insight creation timestamp.
+
+    ``llm_only`` (default true) — only genuinely LLM-written insights appear
+    in the feed; rule-based templates and rule-fallback rows are excluded.
+    Pass ``llm_only=false`` to see everything.
 
     ``dedupe=true`` — collapses near-duplicate insights per (trip, insight_type)
     using the local sentence-transformer (``models/embeddings/...``). When the
@@ -492,6 +509,9 @@ def list_insights(limit: int = 50, insight_type: Optional[str] = None,
     from sqlalchemy import text
     where = []
     params: Dict[str, Any] = {"lim": limit}
+    if llm_only:
+        # Real LLM output only — no 'rule-based-v1', no '…→rule-fallback'.
+        where.append("ai.model NOT LIKE 'rule-based%' AND ai.model NOT LIKE '%rule-fallback%'")
     if insight_type:
         where.append("ai.insight_type = :t")
         params["t"] = insight_type

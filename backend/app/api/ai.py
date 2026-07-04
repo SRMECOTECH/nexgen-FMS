@@ -117,6 +117,30 @@ def _or_dummy(value: Any, dummy: Any) -> tuple[Any, bool]:
     return value, True
 
 
+def _warehouse_counts() -> dict:
+    """REAL numbers from our own warehouse — used in the Mission Control
+    headline whenever the smart-truck anomaly model is offline, so the hero
+    line never quotes a fabricated figure."""
+    out = {"gps_pings": 0, "trips": 0, "total_km": 0.0}
+    try:
+        from sqlalchemy import text
+        from route_intelligence import db as ri_db
+        with ri_db.get_engine().connect() as c:
+            row = c.execute(text(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(distance_km), 0) AS km FROM ri_trips"
+            )).mappings().first()
+            out["trips"] = int(row["n"] or 0)
+            out["total_km"] = float(row["km"] or 0)
+            try:
+                out["gps_pings"] = int(c.execute(
+                    text("SELECT COUNT(*) FROM fact_gps_ping")).scalar() or 0)
+            except Exception:  # table may not exist yet
+                pass
+    except Exception:  # warehouse down — headline falls back to plain text
+        pass
+    return out
+
+
 def _greeting(now: datetime) -> str:
     h = now.hour
     if h < 5:   return "Working late"
@@ -171,38 +195,56 @@ async def mission_control_summary():
     upcoming_trips = (forecast_data or {}).get("forecast_total")
 
     # ----- compose the narrative -----
-    line_open = f"{_greeting(now)}. AI scanned **{scanned or '—'}** trip events overnight."
+    # HONESTY RULE: the headline only quotes a number when it is real. When the
+    # smart-truck anomaly model is offline (dummy), we use OUR warehouse counts
+    # instead of the made-up demo figure (previously the hardcoded "1840").
+    if anom_live:
+        line_open = f"{_greeting(now)}. AI scanned **{scanned or '—'}** trip events overnight."
+    else:
+        w = _warehouse_counts()
+        if w["gps_pings"] or w["trips"]:
+            line_open = (
+                f"{_greeting(now)}. Warehouse holds **{w['gps_pings']:,}** GPS pings and "
+                f"**{w['trips']}** analysed trips ({w['total_km']:,.0f} km)."
+            )
+        else:
+            line_open = f"{_greeting(now)}. Warehouse connected — upload GPS data to start the AI loop."
+
+    # Bullets follow the same rule — a fake model never contributes a bullet.
     bullets: list[str] = []
-    if anom_flagged is not None:
+    if anom_live and anom_flagged is not None:
         bullets.append(f"{anom_flagged} anomalies flagged for review")
-    if fatigued is not None:
+    if fatigue_live and fatigued is not None:
         bullets.append(f"{fatigued} drivers showing fatigue")
-    if drivers_at_risk:
+    if drivers_live and drivers_at_risk:
         bullets.append(f"{drivers_at_risk} drivers in the high-risk bucket")
-    if upcoming_trips:
+    if forecast_live and upcoming_trips:
         bullets.append(f"{upcoming_trips} trips forecast for the next 7 days")
 
-    # operational-risk rollup — crude but transparent
+    # operational-risk rollup — crude but transparent; dummy models never
+    # contribute a risk signal.
     risk_signals = sum([
-        1 if (anom_flagged or 0) > 50 else 0,
-        1 if (fatigued or 0) > 20 else 0,
-        1 if drivers_at_risk > 10 else 0,
+        1 if anom_live and (anom_flagged or 0) > 50 else 0,
+        1 if fatigue_live and (fatigued or 0) > 20 else 0,
+        1 if drivers_live and drivers_at_risk > 10 else 0,
     ])
     risk = "LOW" if risk_signals == 0 else "MEDIUM" if risk_signals < 3 else "HIGH"
 
+    # Signals follow the honesty rule too: a model that is offline reports
+    # ``null`` (UI renders an em-dash) instead of a fabricated demo number.
     return {
         "generated_at": now.isoformat() + "Z",
         "greeting": line_open,
         "operational_risk": risk,
         "bullets": bullets,
         "signals": {
-            "drivers_scanned": len(driver_list),
-            "drivers_at_risk": drivers_at_risk,
-            "fleet_avg_driver_score": avg_score,
-            "fatigued_drivers": fatigued,
-            "anomaly_events_scanned": scanned,
-            "anomaly_events_flagged": anom_flagged,
-            "upcoming_trips_forecast": upcoming_trips,
+            "drivers_scanned": len(driver_list) if drivers_live else None,
+            "drivers_at_risk": drivers_at_risk if drivers_live else None,
+            "fleet_avg_driver_score": avg_score if drivers_live else None,
+            "fatigued_drivers": fatigued if fatigue_live else None,
+            "anomaly_events_scanned": scanned if anom_live else None,
+            "anomaly_events_flagged": anom_flagged if anom_live else None,
+            "upcoming_trips_forecast": upcoming_trips if forecast_live else None,
         },
         "sources": {
             "driver_scorer":      "ok" if drivers_live   else "dummy",
@@ -229,10 +271,10 @@ async def ai_cards():
         _safe(ml_client.scan_anomalies(days=1),   "anomaly_scan"),
         _safe(ml_client.models_comparison(),      "models"),
     )
-    drivers_data, _ = _or_dummy(drivers[0],   _DUMMY_DRIVERS)
-    fatigue_data, _ = _or_dummy(fatigue[0],   _DUMMY_FATIGUE)
-    anom_data, _    = _or_dummy(anomalies[0], _DUMMY_ANOMALIES)
-    models_data, _  = _or_dummy(models[0],    _DUMMY_MODELS)
+    drivers_data, drivers_live = _or_dummy(drivers[0],   _DUMMY_DRIVERS)
+    fatigue_data, fatigue_live = _or_dummy(fatigue[0],   _DUMMY_FATIGUE)
+    anom_data, anom_live       = _or_dummy(anomalies[0], _DUMMY_ANOMALIES)
+    models_data, models_live   = _or_dummy(models[0],    _DUMMY_MODELS)
 
     driver_list = drivers_data.get("drivers", [])
     high_risk   = _bucket_count(driver_list, "risk_level", "high")
@@ -245,6 +287,8 @@ async def ai_cards():
 
     eta_card = (models_data.get("models", {}) or {}).get("eta_predictor", {})
 
+    # ``live`` tells the UI whether the number came from a real model call or
+    # the demo fallback — demo cards render with a "demo" tag, never as fact.
     cards = [
         {
             "id": "fleet_stability",
@@ -252,6 +296,7 @@ async def ai_cards():
             "value_pct": round((1 - anomaly_rate) * 100, 1),
             "confidence_pct": 96,
             "trend": "up" if anomaly_rate < 0.03 else "down",
+            "live": anom_live,
             "blurb": "Composite of anomaly rate, driver risk distribution and maintenance signal.",
             "explain_endpoint": "/api/v1/ai/explain/fleet_stability",
         },
@@ -261,6 +306,7 @@ async def ai_cards():
             "value_pct": round((eta_card.get("metric_value") or 0.92) * 100, 1) if eta_card else 92,
             "confidence_pct": 88,
             "trend": "flat",
+            "live": models_live,
             "blurb": "Average accuracy of the ETA predictor on the last 7 days of completed trips.",
             "explain_endpoint": "/api/v1/ai/explain/eta_confidence",
         },
@@ -270,6 +316,7 @@ async def ai_cards():
             "value_pct": min(100, round((high_risk + fatigued) / max(len(driver_list), 1) * 100, 1)) if driver_list else 0,
             "confidence_pct": 91,
             "trend": "down",
+            "live": drivers_live and fatigue_live,
             "blurb": "Share of drivers currently in the high-risk or fatigued bucket.",
             "explain_endpoint": "/api/v1/ai/explain/risk_index",
         },
@@ -279,6 +326,7 @@ async def ai_cards():
             "value_pct": 89,
             "confidence_pct": 89,
             "trend": "up",
+            "live": models_live,
             "blurb": "Average self-reported confidence across the active model registry.",
             "explain_endpoint": "/api/v1/ai/explain/ai_confidence",
         },

@@ -31,8 +31,12 @@ const aiApi = axios.create({
 export interface HealthStatus {
   status: string;
   service: string;
-  data_source: 'MOCK' | 'LAKEHOUSE';
-  lakehouse_url: string;
+  version?: string;
+  /** e.g. "EXCEL→MYSQL" or "MOCK" */
+  data_source: string;
+  ingest?: string;
+  warehouse?: string | null;
+  warehouse_host?: string;
 }
 
 export interface DashboardSummary {
@@ -664,8 +668,8 @@ export interface MissionControlSummary {
   operational_risk: 'LOW' | 'MEDIUM' | 'HIGH';
   bullets: string[];
   signals: {
-    drivers_scanned: number;
-    drivers_at_risk: number;
+    drivers_scanned: number | null;
+    drivers_at_risk: number | null;
     fleet_avg_driver_score: number | null;
     fatigued_drivers: number | null;
     anomaly_events_scanned: number | null;
@@ -681,6 +685,8 @@ export interface AiCard {
   value_pct: number;
   confidence_pct: number;
   trend: 'up' | 'down' | 'flat';
+  /** false = number came from the demo fallback, not a live model call */
+  live?: boolean;
   blurb: string;
   explain_endpoint: string;
 }

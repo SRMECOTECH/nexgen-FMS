@@ -124,9 +124,10 @@ export async function riTripByDay(tripId) {
 }
 
 export async function riTripLandmarks(tripId, opts = {}) {
-  const params = { samples: opts.samples ?? 5 };
+  const params = { samples: opts.samples ?? 8 };
   if (opts.radius_m) params.radius_m = opts.radius_m;
   if (opts.categories?.length) params.categories = opts.categories.join(',');
+  if (opts.refresh) params.refresh = true;   // bypass the 30-day server cache
   const { data } = await slow.get(`/route-intel/trips/${tripId}/landmarks`, { params });
   return data;
 }

@@ -52,7 +52,8 @@ export default function RouteIntelligenceTrip() {
   const [weather, setWeather] = useState(null);
   const [weatherImpact, setWeatherImpact] = useState(null);
   const [addresses, setAddresses] = useState(null);
-  const [landmarks, setLandmarks] = useState(null);
+  // { status: 'idle' | 'loading' | 'done' | 'error', data, error }
+  const [landmarks, setLandmarks] = useState({ status: 'idle', data: null, error: null });
   const [byDay, setByDay] = useState(null);
   const [loadingByDay, setLoadingByDay] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -89,8 +90,25 @@ export default function RouteIntelligenceTrip() {
 
   const regenAi = async () => {
     setRegen(true);
-    try { await riRegenAi(id); setBundle(await riGetAnalysis(id)); }
+    try {
+      const res = await riRegenAi(id);
+      if (res && res.ok === false && res.detail) setError(res.detail);
+      setBundle(await riGetAnalysis(id));
+    }
     finally { setRegen(false); }
+  };
+
+  // Landmarks are fetched lazily when the card opens; `force` bypasses the
+  // 30-day server cache (used by the Retry button after a network failure).
+  const loadLandmarks = (force = false) => {
+    if (!force && (landmarks.status === 'loading' || landmarks.status === 'done')) return;
+    setLandmarks({ status: 'loading', data: null, error: null });
+    riTripLandmarks(id, { samples: 8, radius_m: 1500, refresh: force })
+      .then(d => setLandmarks({ status: 'done', data: d, error: d?.error ?? null }))
+      .catch(e => setLandmarks({
+        status: 'error', data: null,
+        error: e?.response?.data?.detail ?? e?.message ?? 'lookup failed',
+      }));
   };
 
   // ---- derived series ----
@@ -350,10 +368,10 @@ export default function RouteIntelligenceTrip() {
       id: 'landmarks',
       icon: Building2,
       title: 'Landmarks & POIs near route',
-      description: 'Dhabas, fuel pumps and named places within 1.5 km of the route — sourced from OSM Overpass.',
-      preview: <PreviewKV k="Radius" v="1.5 km" sub="Overpass" />,
-      onOpen: () => { if (!landmarks) riTripLandmarks(id, { samples: 5, radius_m: 1500 }).then(setLandmarks).catch(e => setError(e?.message)); },
-      detail: <LandmarksPanel landmarks={landmarks} />,
+      description: 'Fuel pumps, dhabas, hospitals and rest stops within 1.5 km of the route — one OpenStreetMap query, cached for 30 days.',
+      preview: <PreviewKV k="Radius" v="1.5 km" sub="OpenStreetMap" />,
+      onOpen: () => loadLandmarks(),
+      detail: <LandmarksPanel landmarks={landmarks} onRetry={() => loadLandmarks(true)} />,
     },
     {
       id: 'speed_time',
@@ -476,7 +494,7 @@ export default function RouteIntelligenceTrip() {
       icon: Sparkles,
       title: 'Cost advice (AI)',
       description: 'A natural-language reading of the cost breakdown with the biggest single lever called out.',
-      preview: <PreviewKV k="Source" v={bundle.model ?? 'rule-based'} />,
+      preview: <PreviewKV k="Source" v={bundle.model ?? '—'} />,
       detail: (
         <ChartCard title="Cost advice" icon={Sparkles} subtitle="natural-language reading">
           {costAdvice
@@ -519,7 +537,7 @@ export default function RouteIntelligenceTrip() {
         </div>
       </div>
 
-      {tripSummary && (
+      {tripSummary ? (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
           className="card ai-glow" style={{ borderColor: 'var(--accent)' }}>
           <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full blur-2xl pointer-events-none"
@@ -530,12 +548,23 @@ export default function RouteIntelligenceTrip() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[10px] uppercase tracking-[0.15em] mb-1" style={{ color: 'var(--accent)' }}>
-                AI Summary · {bundle.model}
+                AI Summary · {tripSummary.model ?? bundle.model}
               </div>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--fg-1)' }}>{tripSummary.text}</p>
             </div>
           </div>
         </motion.div>
+      ) : (
+        <div className="card flex items-center justify-between gap-3">
+          <div className="text-xs" style={{ color: 'var(--fg-3)' }}>
+            No AI summary for this trip yet — click <b>Regenerate AI</b> to have
+            the LLM write one (needs the Gemini key on the Settings page).
+          </div>
+          <button onClick={regenAi} disabled={regen} className="btn-soft text-xs shrink-0">
+            {regen ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            Generate
+          </button>
+        </div>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -1718,33 +1747,96 @@ function AddressPanel({ addresses }) {
   );
 }
 
-function LandmarksPanel({ landmarks }) {
-  if (!landmarks) {
+function LandmarksPanel({ landmarks, onRetry }) {
+  const { status, data, error } = landmarks;
+
+  if (status === 'idle' || status === 'loading') {
     return (
-      <div className="text-xs flex items-center gap-2" style={{ color: 'var(--fg-3)' }}>
-        <Loader2 className="w-3 h-3 animate-spin" /> Querying Overpass…
+      <div className="space-y-2">
+        <div className="text-xs flex items-center gap-2" style={{ color: 'var(--fg-3)' }}>
+          <Loader2 className="w-3 h-3 animate-spin" /> Searching OpenStreetMap along the route…
+        </div>
+        <div className="text-[10px]" style={{ color: 'var(--fg-4)' }}>
+          One query for the whole corridor — usually a few seconds; cached afterwards.
+        </div>
       </div>
     );
   }
-  return (
-    <div>
-      <div className="text-[11px] mb-2" style={{ color: 'var(--fg-3)' }}>
-        {landmarks.landmarks?.length ?? 0} POIs along route
+
+  if (status === 'error' || (error && !(data?.landmarks?.length))) {
+    return (
+      <div className="rounded-lg p-4 space-y-2" style={{ background: 'var(--bg-2)' }}>
+        <div className="text-xs font-semibold flex items-center gap-2" style={{ color: 'var(--warning)' }}>
+          <AlertTriangle className="w-3.5 h-3.5" /> Landmark lookup failed
+        </div>
+        <div className="text-[11px] mono" style={{ color: 'var(--fg-3)' }}>
+          {error || 'All OpenStreetMap mirrors are busy right now.'}
+        </div>
+        <button onClick={onRetry} className="btn-soft text-xs mt-1">
+          <RefreshCw className="w-3 h-3" /> Try again
+        </button>
       </div>
-      <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
-        {(landmarks.landmarks ?? []).map((p, i) => (
-          <div key={i} className="flex items-start justify-between gap-2 text-xs p-2 rounded" style={{ background: 'var(--bg-2)' }}>
-            <div className="min-w-0">
-              <div className="font-semibold truncate" style={{ color: 'var(--fg-1)' }}>{p.name}</div>
-              <div className="text-[10px] mono" style={{ color: 'var(--fg-3)' }}>{p.category} · {p.distance_km} km</div>
+    );
+  }
+
+  const pois = data?.landmarks ?? [];
+  if (pois.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="text-xs" style={{ color: 'var(--fg-3)' }}>
+          No named landmarks within {(data?.radius_m ?? 1500) / 1000} km of this route —
+          it likely runs through open country.
+        </div>
+        <button onClick={onRetry} className="btn-soft text-xs">
+          <RefreshCw className="w-3 h-3" /> Search again
+        </button>
+      </div>
+    );
+  }
+
+  // group by category, nearest first inside each group
+  const groups = pois.reduce((acc, p) => {
+    (acc[p.category] = acc[p.category] || []).push(p);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--fg-3)' }}>
+        <span>
+          <span className="font-semibold" style={{ color: 'var(--fg-1)' }}>{pois.length}</span> places within{' '}
+          {(data?.radius_m ?? 1500) / 1000} km of the route
+          {data?.source === 'cache' && ' · from cache'}
+          {data?.source === 'stale-cache' && ' · cached copy (mirrors busy)'}
+        </span>
+        <button onClick={onRetry} className="btn-soft text-[11px]" title="Bypass the cache and re-query OpenStreetMap">
+          <RefreshCw className="w-3 h-3" /> Refresh
+        </button>
+      </div>
+
+      <div className="space-y-4 max-h-[62vh] overflow-y-auto pr-1">
+        {Object.entries(groups).map(([category, items]) => (
+          <div key={category}>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-sm">{items[0].icon ?? '📍'}</span>
+              <span className="text-[10px] uppercase tracking-[0.12em] font-semibold" style={{ color: 'var(--accent)' }}>
+                {category}
+              </span>
+              <span className="text-[10px] mono" style={{ color: 'var(--fg-4)' }}>{items.length}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+              {items.map((p, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded"
+                  style={{ background: 'var(--bg-2)' }}>
+                  <span className="font-medium truncate" style={{ color: 'var(--fg-1)' }}>{p.name}</span>
+                  <span className="mono text-[10px] shrink-0" style={{ color: 'var(--fg-3)' }}>
+                    {p.distance_km < 1 ? `${Math.round(p.distance_km * 1000)} m` : `${p.distance_km.toFixed(1)} km`}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         ))}
-        {(landmarks.landmarks ?? []).length === 0 && (
-          <div className="text-xs" style={{ color: 'var(--fg-3)' }}>
-            No POIs found (Overpass mirror may be rate-limiting — try again).
-          </div>
-        )}
       </div>
     </div>
   );

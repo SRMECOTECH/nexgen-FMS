@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, X, Sparkles } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 
 // ============================================================================
 // FeatureCatalog — a grid of "feature cards" + a slide-in drawer that shows
@@ -173,10 +173,6 @@ function DrawerHeader({ f, onClose }) {
           {Icon && <Icon className="w-4 h-4" />}
         </div>
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.18em] mb-0.5" style={{ color: 'var(--accent)' }}>
-            <Sparkles className="w-3 h-3 inline mr-1 -mt-0.5" />
-            Feature
-          </div>
           <h2
             className="text-xl font-bold leading-tight truncate"
             style={{ color: 'var(--fg-1)', fontFamily: 'var(--font-display)' }}
