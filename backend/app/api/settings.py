@@ -96,9 +96,12 @@ CONFIG_REGISTRY: List[Dict[str, Any]] = [
                "Free key from https://aistudio.google.com → 'Get API key'. "
                "Stored only in your .env (never committed to git).", secret=True),
             _k("GEMINI_MODEL", "Gemini model",
-               "Which Gemini model to call. gemini-2.0-flash is fast + free; "
-               "gemini-2.5-flash is also free-tier.",
-               choices=["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]),
+               "Which Gemini model to call. All of these verified free-tier. "
+               "gemini-2.5-flash = best quality; -lite / flash-lite-latest = "
+               "faster + higher daily quota; gemini-3-flash-preview = newest.",
+               choices=["gemini-2.5-flash", "gemini-2.5-flash-lite",
+                        "gemini-flash-latest", "gemini-flash-lite-latest",
+                        "gemini-3-flash-preview"]),
             _k("INSIGHTS_TEMPERATURE", "Creativity (temperature)",
                "0.0 = strict/factual, 1.0 = more varied wording. 0.4 is a good default.",
                kind="number"),

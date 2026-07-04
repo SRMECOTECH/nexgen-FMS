@@ -89,7 +89,7 @@ class CloudLLMBackend(_Backend):
     swapping providers later is a one-line change. Any failure (bad key, quota,
     network) is caught by ``_generate`` and falls back to the rule-based text."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash",
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash",
                  temperature: float = 0.4):
         # Local imports so LangChain stays an OPTIONAL dependency — the app
         # runs fine on rule-based templates if these packages aren't installed.
@@ -158,7 +158,7 @@ def get_backend() -> _Backend:
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if provider in ("gemini", "google") and api_key:
         try:
-            model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
             temp = float(os.environ.get("INSIGHTS_TEMPERATURE", "0.4"))
             _BACKEND = CloudLLMBackend(api_key, model=model, temperature=temp)
             return _BACKEND

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Brain, Compass, Sparkles, TrendingUp, TrendingDown, Minus,
   ShieldCheck, AlertTriangle, Activity, X, ChevronRight,
+  Wand2, RefreshCw, Loader2,
 } from 'lucide-react';
 import {
-  aiMissionControl, aiCards, aiExplain,
+  aiMissionControl, aiCards, aiExplain, riListInsights,
   type MissionControlSummary, type AiCard,
 } from '../lib/api';
 
@@ -201,6 +203,12 @@ export default function MissionControl() {
       )}
 
       {/* ============================================================== */}
+      {/* 4) Latest AI insights — generated on demand, straight from the  */}
+      {/*    ri_ai_insights table (Gemini via LangChain, or templates).   */}
+      {/* ============================================================== */}
+      <InsightsFeed />
+
+      {/* ============================================================== */}
       {/* Why? drawer                                                     */}
       {/* ============================================================== */}
       <AnimatePresence>
@@ -377,5 +385,134 @@ function CardSkeleton({ inDrawer = false }: { inDrawer?: boolean }) {
       <div className="h-8 w-1/3 rounded mb-2" style={{ background: 'var(--bg-2)' }} />
       <div className="h-3 w-full rounded" style={{ background: 'var(--bg-2)' }} />
     </div>
+  );
+}
+
+// ============================================================================
+// Latest AI insights feed — the newest rows from ri_ai_insights, shown right
+// on Mission Control so the "AI gives you something" is visible on landing.
+// Rows written by Gemini get a glowing badge; template fallbacks are grey.
+// Generation stays on-demand: open a trip → "Regenerate AI" adds rows here.
+// ============================================================================
+interface FeedRow {
+  id: number; insight_type: string; text: string; model: string;
+  created_at: string; trip_id: number | null;
+  from_waypoint: string | null; to_waypoint: string | null;
+  vehicle_id: string | null;
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  trip_summary: 'Trip summary',
+  cost_advice: 'Cost advice',
+  route_quality: 'Route quality',
+  traffic_callout: 'Traffic',
+  recommendations_list: 'Recommendations',
+  comparison_verdict: 'Comparison',
+};
+
+function InsightsFeed() {
+  const [rows, setRows]       = useState<FeedRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const d = await riListInsights(8);
+      setRows(d.insights ?? []);
+    } catch { setRows([]); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  return (
+    <section
+      className="rounded-2xl p-5 border"
+      style={{ background: 'var(--bg-3)', borderColor: 'var(--border)' }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2" style={{ color: 'var(--fg-3)' }}>
+          <Wand2 className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+          <span className="text-[10px] uppercase tracking-[0.18em] font-semibold">
+            Latest AI insights · generated on demand
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={load}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border transition-all hover:bg-[var(--bg-2)]"
+            style={{ borderColor: 'var(--border)', color: 'var(--fg-2)' }}
+          >
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            Refresh
+          </button>
+          <Link
+            to="/route-intel/insights"
+            className="flex items-center gap-1 text-[11px] font-semibold"
+            style={{ color: 'var(--accent)' }}
+          >
+            Full feed <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+
+      {!rows ? (
+        <div className="h-16 rounded-lg animate-pulse" style={{ background: 'var(--bg-2)' }} />
+      ) : rows.length === 0 ? (
+        <div className="text-sm py-4 text-center" style={{ color: 'var(--fg-3)' }}>
+          No AI insights yet — open a trip in <Link to="/route-intel" style={{ color: 'var(--accent)' }}>Route
+          Intelligence</Link> and click <b>Regenerate AI</b>.
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-3">
+          {rows.map((r) => {
+            const isLlm = (r.model || '').startsWith('gemini') && !(r.model || '').includes('rule-fallback');
+            const tripLabel = r.from_waypoint || r.to_waypoint
+              ? `${r.from_waypoint ?? '—'} → ${r.to_waypoint ?? '—'}`
+              : r.vehicle_id ?? '';
+            return (
+              <Link
+                key={r.id}
+                to={r.trip_id ? `/route-intel/trips/${r.trip_id}` : '/route-intel/insights'}
+                className="rounded-xl p-4 border block transition-all hover:border-[var(--accent)]"
+                style={{ background: 'var(--bg-2)', borderColor: 'var(--border)' }}
+              >
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
+                    style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                  >
+                    {TYPE_LABEL[r.insight_type] ?? r.insight_type}
+                  </span>
+                  {tripLabel && (
+                    <span className="text-[11px] mono truncate" style={{ color: 'var(--fg-3)' }}>{tripLabel}</span>
+                  )}
+                  <span
+                    className="ml-auto flex items-center gap-1 text-[10px] font-semibold"
+                    style={{ color: isLlm ? 'var(--success)' : 'var(--fg-4)' }}
+                    title={r.model}
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    {isLlm ? 'Gemini AI' : 'template'}
+                  </span>
+                </div>
+                <p
+                  className="text-xs leading-relaxed"
+                  style={{
+                    color: 'var(--fg-2)',
+                    display: '-webkit-box', WebkitLineClamp: 3,
+                    WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                  }}
+                >
+                  {r.text}
+                </p>
+                <div className="text-[10px] mono mt-2" style={{ color: 'var(--fg-4)' }}>
+                  {new Date(r.created_at).toLocaleString()}
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
