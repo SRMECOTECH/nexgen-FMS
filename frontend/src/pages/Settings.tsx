@@ -251,6 +251,15 @@ export default function Settings() {
                         <option value="true">true</option>
                         <option value="false">false</option>
                       </select>
+                    ) : k.choices && k.choices.length ? (
+                      <select
+                        value={value || k.choices[0]}
+                        onChange={e => setEdits(p => ({ ...p, [k.key]: e.target.value }))}
+                        className="w-full rounded-lg px-3 py-2 text-sm mono outline-none"
+                        style={inputStyle}
+                      >
+                        {k.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     ) : (
                       <input
                         type={k.secret && !reveal[k.key] ? 'password' : 'text'}

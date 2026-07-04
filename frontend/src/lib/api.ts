@@ -785,6 +785,7 @@ export async function observeGetAlertLabels(): Promise<{ labels: Record<string, 
 export interface ConfigKey {
   key: string; label: string; description: string;
   secret: boolean; restart: boolean; kind: 'text' | 'number' | 'bool';
+  choices?: string[] | null;
   value: string;
 }
 export interface ConfigSection { section: string; hint: string; keys: ConfigKey[]; }

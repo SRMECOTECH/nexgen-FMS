@@ -41,9 +41,11 @@ ENV_EXAMPLE = ROOT / ".env.example"
 # password fields in the UI; ``restart`` marks keys that need a process restart.
 # ---------------------------------------------------------------------------
 def _k(key: str, label: str, desc: str, *, secret: bool = False,
-       restart: bool = False, kind: str = "text") -> Dict[str, Any]:
+       restart: bool = False, kind: str = "text",
+       choices: List[str] | None = None) -> Dict[str, Any]:
     return {"key": key, "label": label, "description": desc,
-            "secret": secret, "restart": restart, "kind": kind}
+            "secret": secret, "restart": restart, "kind": kind,
+            "choices": choices}
 
 
 CONFIG_REGISTRY: List[Dict[str, Any]] = [
@@ -79,6 +81,27 @@ CONFIG_REGISTRY: List[Dict[str, Any]] = [
                "Base URL the React app calls. Must point at the backend's /api/v1.", restart=True),
             _k("VITE_ML_API_URL", "Frontend → ML API URL",
                "Direct link to the smart-truck ML API (Swagger / raw-model buttons only).", restart=True),
+        ],
+    },
+    {
+        "section": "AI Insights (Route Intelligence)",
+        "hint": "Real, dynamic insights from a free-tier cloud LLM. Leave provider on "
+                "'rule-based' to use the built-in templates (no key needed).",
+        "keys": [
+            _k("INSIGHTS_PROVIDER", "Insights engine",
+               "gemini = real AI via Google Gemini (needs a key below); "
+               "rule-based = built-in templates, always works, no key.",
+               choices=["rule-based", "gemini"]),
+            _k("GEMINI_API_KEY", "Gemini API key",
+               "Free key from https://aistudio.google.com → 'Get API key'. "
+               "Stored only in your .env (never committed to git).", secret=True),
+            _k("GEMINI_MODEL", "Gemini model",
+               "Which Gemini model to call. gemini-2.0-flash is fast + free; "
+               "gemini-2.5-flash is also free-tier.",
+               choices=["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]),
+            _k("INSIGHTS_TEMPERATURE", "Creativity (temperature)",
+               "0.0 = strict/factual, 1.0 = more varied wording. 0.4 is a good default.",
+               kind="number"),
         ],
     },
     {
@@ -216,6 +239,13 @@ def put_config(body: ConfigUpdate):
     try:
         from lakehouse.settings import get_settings
         get_settings.cache_clear()
+    except Exception:  # noqa: BLE001
+        pass
+    # Re-select the AI-insights backend so a freshly-saved Gemini key/model/
+    # provider takes effect on the next "Regenerate AI" without a restart.
+    try:
+        from route_intelligence import ai_insights
+        ai_insights.reset_backend()
     except Exception:  # noqa: BLE001
         pass
 

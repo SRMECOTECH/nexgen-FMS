@@ -2,17 +2,23 @@
 AI insights — turn the deterministic metric blobs into natural-language
 paragraphs and recommendation cards.
 
-Two backends behind one ``generate_insight(...)`` function:
+Three backends behind one ``generate_insight(...)`` function, chosen in this
+priority order by ``get_backend()``:
 
-1. ``LlamaCppBackend``    — loads any GGUF file from ``models/insights/``.
+1. ``CloudLLMBackend``    — a free-tier cloud LLM (Google Gemini) driven via
+   LangChain. Active when ``INSIGHTS_PROVIDER=gemini`` and ``GEMINI_API_KEY``
+   are set (paste them on the Settings page). This is the "real, dynamic AI".
+
+2. ``LlamaCppBackend``    — loads any GGUF file from ``models/insights/``.
    The user drops a Phi-3-mini / Qwen2.5-1.5B-Instruct / TinyLlama
    ``*.gguf`` into that folder and we pick it up automatically. Requires
    ``pip install llama-cpp-python`` and uses CPU by default (fine for
    short generations).
 
-2. ``RuleBasedBackend``   — deterministic fallback that writes good-quality
+3. ``RuleBasedBackend``   — deterministic fallback that writes good-quality
    English from the same metric blobs using f-strings. Always available
-   and used when no GGUF is present or the llama lib isn't installed.
+   and used when no cloud key / GGUF is present, or when the cloud call
+   fails or runs out of free-tier quota — so insights NEVER break.
 
 Whichever backend is active, every insight is persisted to ``ri_ai_insights``
 by ``route_intelligence.pipeline`` so downstream MCP/UI calls are cached.
@@ -76,6 +82,49 @@ class LlamaCppBackend(_Backend):
 
 
 # ============================================================================
+# Cloud LLM backend — Google Gemini via LangChain (free tier)
+# ============================================================================
+class CloudLLMBackend(_Backend):
+    """Real, dynamic insights from a cloud LLM. Uses LangChain's chat model so
+    swapping providers later is a one-line change. Any failure (bad key, quota,
+    network) is caught by ``_generate`` and falls back to the rule-based text."""
+
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash",
+                 temperature: float = 0.4):
+        # Local imports so LangChain stays an OPTIONAL dependency — the app
+        # runs fine on rule-based templates if these packages aren't installed.
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        self.model = model
+        self.llm = ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            temperature=temperature,
+            max_output_tokens=512,
+            timeout=int(os.environ.get("INSIGHTS_TIMEOUT", "20")),
+        )
+        self.name = f"gemini:{model}"
+        logger.info("ai_insights: cloud LLM backend ready (%s)", self.name)
+
+    def generate_insight(self, role: str, payload: Dict[str, Any]) -> str:
+        """Send system rules + the metric facts as proper chat messages and
+        return the generated paragraph."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        body = json.dumps(payload, indent=2, default=str)
+        user = f"Task: {role}\nFacts (use ONLY these numbers):\n{body}\n\nWrite the insight now."
+        resp = self.llm.invoke([SystemMessage(content=_SYS_PROMPT),
+                                HumanMessage(content=user)])
+        return (getattr(resp, "content", "") or "").strip()
+
+    def generate(self, prompt: str, max_tokens: int = 256):
+        # Protocol compliance — insights use generate_insight() above.
+        from langchain_core.messages import HumanMessage
+        resp = self.llm.invoke([HumanMessage(content=prompt)])
+        return (getattr(resp, "content", "") or "").strip(), None, None
+
+
+# ============================================================================
 # Rule-based backend — always available
 # ============================================================================
 class RuleBasedBackend(_Backend):
@@ -103,6 +152,20 @@ def get_backend() -> _Backend:
     global _BACKEND
     if _BACKEND is not None:
         return _BACKEND
+
+    # 1) Cloud LLM (Gemini) — active when explicitly selected + a key is present.
+    provider = os.environ.get("INSIGHTS_PROVIDER", "rule-based").strip().lower()
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if provider in ("gemini", "google") and api_key:
+        try:
+            model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+            temp = float(os.environ.get("INSIGHTS_TEMPERATURE", "0.4"))
+            _BACKEND = CloudLLMBackend(api_key, model=model, temperature=temp)
+            return _BACKEND
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ai_insights: cloud LLM init failed (%s) — trying local/rules", exc)
+
+    # 2) Local GGUF model, if the user dropped one in models/insights/.
     gguf = _find_gguf()
     if gguf is not None:
         try:
@@ -110,8 +173,18 @@ def get_backend() -> _Backend:
             return _BACKEND
         except Exception as exc:
             logger.warning("ai_insights: GGUF load failed (%s) — falling back to rules", exc)
+
+    # 3) Deterministic templates — always works.
     _BACKEND = RuleBasedBackend()
     return _BACKEND
+
+
+def reset_backend() -> None:
+    """Drop the cached backend so the next call re-selects based on current env.
+    Called by the Settings API after a config save so a freshly-pasted Gemini
+    key takes effect without a backend restart."""
+    global _BACKEND
+    _BACKEND = None
 
 
 def backend_name() -> str:
@@ -158,8 +231,8 @@ def trip_summary(trip: Dict, costs: Dict, efficiency: Dict, traffic: Dict, zones
         "max_speed": zones.get("max_speed_kmph"),
         "avg_speed": zones.get("avg_speed_kmph"),
     }
-    text = _generate("trip_summary", payload, _rule_trip_summary)
-    return _wrap(text, "trip_summary")
+    text, model = _generate("trip_summary", payload, _rule_trip_summary)
+    return _wrap(text, "trip_summary", model)
 
 
 def cost_advice(costs: Dict, opportunities: List[Dict]) -> Dict:
@@ -171,8 +244,8 @@ def cost_advice(costs: Dict, opportunities: List[Dict]) -> Dict:
         "cost_per_km": costs.get("cost_per_km"),
         "opportunities": opportunities,
     }
-    text = _generate("cost_advice", payload, _rule_cost_advice)
-    return _wrap(text, "cost_advice")
+    text, model = _generate("cost_advice", payload, _rule_cost_advice)
+    return _wrap(text, "cost_advice", model)
 
 
 def route_quality(efficiency: Dict, backtracks: List[Dict], zones: Dict) -> Dict:
@@ -181,46 +254,56 @@ def route_quality(efficiency: Dict, backtracks: List[Dict], zones: Dict) -> Dict
         "backtrack_count": len(backtracks),
         "speed_zones": zones,
     }
-    text = _generate("route_quality", payload, _rule_route_quality)
-    return _wrap(text, "route_quality")
+    text, model = _generate("route_quality", payload, _rule_route_quality)
+    return _wrap(text, "route_quality", model)
 
 
 def traffic_callout(traffic: Dict) -> Dict:
-    text = _generate("traffic_callout", traffic, _rule_traffic_callout)
-    return _wrap(text, "traffic_callout")
+    text, model = _generate("traffic_callout", traffic, _rule_traffic_callout)
+    return _wrap(text, "traffic_callout", model)
 
 
 def recommendations_list(opportunities: List[Dict]) -> Dict:
     """Bullet list (one sentence per opp) — designed to render as cards."""
     payload = {"opportunities": opportunities}
-    text = _generate("recommendations_list", payload, _rule_recommendations)
-    return _wrap(text, "recommendations_list")
+    text, model = _generate("recommendations_list", payload, _rule_recommendations)
+    return _wrap(text, "recommendations_list", model)
 
 
 def comparison_verdict(comparison_rows: List[Dict]) -> Dict:
     payload = {"rows": comparison_rows}
-    text = _generate("comparison_verdict", payload, _rule_comparison_verdict)
-    return _wrap(text, "comparison_verdict")
+    text, model = _generate("comparison_verdict", payload, _rule_comparison_verdict)
+    return _wrap(text, "comparison_verdict", model)
 
 
 # ============================================================================
 # Internals
 # ============================================================================
-def _generate(role: str, payload: Dict, rule_fn) -> str:
+def _generate(role: str, payload: Dict, rule_fn) -> Tuple[str, str]:
+    """Return (text, model_label). The label names what ACTUALLY produced the
+    text, so a fallback reads e.g. 'gemini:...→rule-fallback' rather than
+    falsely claiming the LLM wrote it."""
     be = get_backend()
     if isinstance(be, RuleBasedBackend):
-        return rule_fn(payload).strip()
+        return rule_fn(payload).strip(), be.name
     try:
-        prompt = _build_prompt(role, payload)
-        text, _, _ = be.generate(prompt, max_tokens=320)
-        return text.strip() or rule_fn(payload).strip()
+        if isinstance(be, CloudLLMBackend):
+            text = be.generate_insight(role, payload)
+        else:
+            prompt = _build_prompt(role, payload)
+            text, _, _ = be.generate(prompt, max_tokens=320)
+        text = (text or "").strip()
+        if text:
+            return text, be.name
+        return rule_fn(payload).strip(), f"{be.name}→rule-fallback"
     except Exception as exc:
-        logger.warning("ai_insights: backend failed (%s) — using rule fallback", exc)
-        return rule_fn(payload).strip()
+        logger.warning("ai_insights: backend '%s' failed (%s) — using rule fallback",
+                       getattr(be, "name", "?"), exc)
+        return rule_fn(payload).strip(), f"{getattr(be, 'name', '?')}→rule-fallback"
 
 
-def _wrap(text: str, kind: str) -> Dict:
-    return {"insight_type": kind, "text": text, "model": backend_name()}
+def _wrap(text: str, kind: str, model: Optional[str] = None) -> Dict:
+    return {"insight_type": kind, "text": text, "model": model or backend_name()}
 
 
 # ----------------------------------------------------------------------------

@@ -64,6 +64,14 @@ logs into the browser — startup, DB bootstrap, every API request, and full
 error tracebacks — with level filters and text search. If anything fails,
 the reason is on that page.
 
+**Real AI insights (optional)**: Route Intelligence insights default to
+built-in templates (no key needed). To get genuinely dynamic AI insights,
+grab a free key at [aistudio.google.com](https://aistudio.google.com) →
+open **Settings → AI Insights**, paste `GEMINI_API_KEY`, set the engine to
+`gemini`, Save — then click **Regenerate AI** on any trip. Powered by Google
+Gemini via LangChain; falls back to templates automatically if the key is
+missing or the free-tier quota runs out.
+
 ### First-time setup (project-local venv)
 
 ```powershell

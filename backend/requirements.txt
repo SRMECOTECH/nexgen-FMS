@@ -1,7 +1,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-pydantic==2.10.4
-pydantic-settings==2.7.1
+pydantic>=2.11,<3          # >=2.11 so langchain-core (cloud insights) is satisfied
+pydantic-settings>=2.7,<3
 python-dotenv==1.0.1
 python-multipart==0.0.20
 pandas==2.2.3
@@ -31,6 +31,11 @@ streamlit-folium>=0.15
 geopy>=2.4
 overpy>=0.7
 timezonefinder>=6.2
+
+# Cloud AI insights (optional — free-tier Google Gemini via LangChain).
+# Active when INSIGHTS_PROVIDER=gemini + GEMINI_API_KEY are set (Settings page).
+langchain-core>=0.3
+langchain-google-genai>=2.0
 
 # Local AI insights (optional — drop GGUF into models/insights/ to activate)
 llama-cpp-python>=0.2     # local generative LLM (Qwen2.5-1.5B-Instruct / Phi-3-mini GGUF)
