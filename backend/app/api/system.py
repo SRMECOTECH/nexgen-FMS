@@ -38,31 +38,19 @@ def get_monitoring():
 
 
 @router.get("/logs")
-def get_logs(limit: int = Query(100, ge=1, le=1000), level: str | None = None):
-    levels = ["INFO", "INFO", "INFO", "WARN", "ERROR", "DEBUG"]
-    services = ["backend", "ml-service", "lakehouse", "scheduler"]
-    messages = [
-        "Fetched 1500 rows from telemetry.fact_trips",
-        "ETA prediction served (driver=7012, lane=Mumbai-Pune) in 38ms",
-        "Anomaly scan completed — 3 events flagged",
-        "ClickHouse query took 412ms (above 250ms threshold)",
-        "Driver scorer model loaded from registry v3",
-        "Alert generated: speeding (MH12AB1234)",
-        "Iceberg snapshot rolled over (n=12)",
-        "Scheduled job daily_driver_score finished",
-    ]
-    out = []
-    for i in range(limit):
-        lvl = _RNG.choice(levels)
-        out.append({
-            "ts": (datetime.now() - timedelta(seconds=i * 7)).isoformat(),
-            "level": lvl,
-            "service": _RNG.choice(services),
-            "message": _RNG.choice(messages),
-        })
-    if level:
-        out = [r for r in out if r["level"] == level.upper()]
-    return {"logs": out}
+def get_logs(
+    limit: int = Query(200, ge=1, le=1000),
+    level: str | None = Query(None, description="Minimum level: DEBUG|INFO|WARNING|ERROR"),
+    search: str | None = Query(None, description="Substring match on service/message/traceback"),
+    after_id: int = Query(0, ge=0, description="Only records newer than this id (incremental poll)"),
+):
+    """REAL backend logs from the in-memory ring buffer (see core/logbuffer.py).
+    Every line the backend logs — startup, DB bootstrap, per-request traces,
+    unhandled exceptions with full tracebacks — is visible here and on the
+    System → Logs page in the UI."""
+    from backend.app.core import logbuffer
+
+    return logbuffer.get_logs(limit=limit, level=level, search=search, after_id=after_id)
 
 
 @router.get("/recovery")

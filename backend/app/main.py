@@ -36,6 +36,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Capture every backend log line (incl. tracebacks) into the in-memory ring
+# buffer that the System → Logs page reads. Must happen before routers import.
+from backend.app.core import logbuffer  # noqa: E402
+logbuffer.install()
+
 settings = get_settings()
 
 app = FastAPI(

@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   Activity, Wand2, FileSpreadsheet, Microscope, ExternalLink,
   Compass, Eye, Brain, TrendingUp, Lightbulb, Zap, GraduationCap, Settings,
+  ScrollText,
 } from 'lucide-react';
 import { fetchHealth, type HealthStatus } from '../../lib/api';
 
@@ -85,9 +86,10 @@ const sections: NavSection[] = [
   },
   {
     title: 'System',
-    hint: 'Configuration & database',
+    hint: 'Configuration, database & logs',
     items: [
       { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/logs',     label: 'Logs',     icon: ScrollText },
     ],
   },
 ];

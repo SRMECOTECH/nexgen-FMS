@@ -59,6 +59,11 @@ the app falls back gracefully when they're absent) and **every setting can be
 viewed/edited from the UI**: **System → Settings** shows the DB status, an
 "Initialize database" button, and every `.env` tunable with save-back to file.
 
+**Troubleshooting is built in**: **System → Logs** streams the real backend
+logs into the browser — startup, DB bootstrap, every API request, and full
+error tracebacks — with level filters and text search. If anything fails,
+the reason is on that page.
+
 ### First-time setup (project-local venv)
 
 ```powershell

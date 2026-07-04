@@ -127,10 +127,19 @@ export interface AlertItem {
 }
 
 export interface LogEntry {
+  id: number;
   ts: string;
-  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
+  level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
   service: string;
   message: string;
+  exc: string | null;
+}
+
+export interface LogsResponse {
+  logs: LogEntry[];
+  latest_id: number;
+  counts: Record<'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL', number>;
+  buffered: number;
 }
 
 // ------------------------------ Calls ------------------------------
@@ -180,8 +189,10 @@ export async function fetchAlerts(): Promise<{ alerts: AlertItem[] }> {
   return data;
 }
 
-export async function fetchLogs(limit = 100): Promise<{ logs: LogEntry[] }> {
-  const { data } = await api.get(`/system/logs?limit=${limit}`);
+export async function fetchLogs(
+  opts: { limit?: number; level?: string; search?: string } = {},
+): Promise<LogsResponse> {
+  const { data } = await api.get('/system/logs', { params: opts });
   return data;
 }
 
